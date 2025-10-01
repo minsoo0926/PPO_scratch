@@ -67,7 +67,11 @@ class PPOAgent:
         self.optimizer = optim.Adam(self.network.parameters(), lr=lr)
         
         # Initialize memory buffer
-        self.memory = PPOMemory(buffer_size, state_dim, device)
+        if continuous_space:
+            continuous_dim = action_dim
+        else:
+            continuous_dim = None
+        self.memory = PPOMemory(buffer_size, state_dim, device, continuous_dim)
         
         # Training statistics
         self.training_stats = {
@@ -163,7 +167,7 @@ class PPOAgent:
             if isinstance(next_state, np.ndarray):
                 next_state = torch.from_numpy(next_state).float().to(self.device)
             with torch.no_grad():
-                _, next_value = self.network(next_state.unsqueeze(0))
+                _, next_value, _ = self.network(next_state.unsqueeze(0))
                 next_value = next_value.item()
         
         # Compute advantages and returns
@@ -198,8 +202,8 @@ class PPOAgent:
                 
                 # Compute policy loss
                 ratio = torch.exp(new_log_probs - batch_old_log_probs)
-                surr1 = ratio * batch_advantages
-                surr2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
+                surr1 = ratio.sum() * batch_advantages
+                surr2 = torch.clamp(ratio.sum(), 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # Compute value loss

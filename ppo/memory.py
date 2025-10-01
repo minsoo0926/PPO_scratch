@@ -7,7 +7,7 @@ import numpy as np
 class PPOMemory:
     """Memory buffer for PPO agent."""
     
-    def __init__(self, buffer_size, state_dim, device='cpu'):
+    def __init__(self, buffer_size, state_dim, device='cpu', continuous_dim=None):
         """
         Initialize memory buffer.
         
@@ -15,18 +15,24 @@ class PPOMemory:
             buffer_size (int): Maximum size of the buffer
             state_dim (int): Dimension of state space
             device (str): Device to store tensors on
+            continuous_dim (int): Dimension of continuous action space if applicable
         """
         self.buffer_size = buffer_size
         self.device = device
         self.ptr = 0
         self.size = 0
+        self.continuous_dim = continuous_dim
         
         # Initialize buffers
         self.states = torch.zeros((buffer_size, state_dim), dtype=torch.float32, device=device)
-        self.actions = torch.zeros(buffer_size, dtype=torch.long, device=device)
+        if continuous_dim:
+            self.actions = torch.zeros((buffer_size, continuous_dim), dtype=torch.float32, device=device)
+            self.log_probs = torch.zeros((buffer_size, continuous_dim), dtype=torch.float32, device=device)
+        else:
+            self.actions = torch.zeros(buffer_size, dtype=torch.long, device=device)
+            self.log_probs = torch.zeros(buffer_size, dtype=torch.float32, device=device)
         self.rewards = torch.zeros(buffer_size, dtype=torch.float32, device=device)
         self.values = torch.zeros(buffer_size, dtype=torch.float32, device=device)
-        self.log_probs = torch.zeros(buffer_size, dtype=torch.float32, device=device)
         self.dones = torch.zeros(buffer_size, dtype=torch.bool, device=device)
         
     def store(self, state, action, reward, value, log_prob, done):
@@ -43,7 +49,11 @@ class PPOMemory:
         """
         if isinstance(state, np.ndarray):
             state = torch.from_numpy(state).float()
-        
+        if isinstance(action, np.ndarray):
+            action = torch.from_numpy(action).float().to(self.device)
+        if isinstance(log_prob, np.ndarray):
+            log_prob = torch.from_numpy(log_prob).float().to(self.device)
+        reward = float(reward)
         self.states[self.ptr] = state.to(self.device)
         self.actions[self.ptr] = action
         self.rewards[self.ptr] = reward

@@ -7,7 +7,8 @@ import matplotlib.pyplot as plt
 from ppo import PPOAgent
 
 ENV_CONFIG = {
-    "id": "BipedalWalker-v3", # "LunarLander-v3",
+    "id": "BipedalWalker-v3", 
+    # "id": "LunarLander-v3",
     # "continuous": True,
 }
 
