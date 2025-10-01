@@ -18,7 +18,7 @@ class ActorCritic(nn.Module):
             action_dim (int): Dimension of action space
             hidden_dim (int): Hidden layer dimension
         """
-        super(ActorCritic, self).__init__()
+        super().__init__()
         
         # Shared layers
         self.shared_layers = nn.Sequential(
