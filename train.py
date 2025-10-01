@@ -6,8 +6,13 @@ import gymnasium as gym
 import matplotlib.pyplot as plt
 from ppo import PPOAgent
 
+ENV_CONFIG = {
+    "id": "LunarLander-v3",
+    "continuous": False,
+}
 
-def train_ppo(env_name='CartPole-v1', total_timesteps=100000, save_freq=10000):
+
+def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000):
     """
     Train PPO agent on given environment.
     
@@ -17,7 +22,7 @@ def train_ppo(env_name='CartPole-v1', total_timesteps=100000, save_freq=10000):
         save_freq (int): Frequency of saving the model (in timesteps)
     """
     # Create environment
-    env = gym.make(env_name)
+    env = gym.make(**env_config, render_mode=None)
     
     # Get environment dimensions
     state_dim = env.observation_space.shape[0]
@@ -54,7 +59,7 @@ def train_ppo(env_name='CartPole-v1', total_timesteps=100000, save_freq=10000):
     episode_rewards = []
     episode_lengths = []
     
-    print(f"Starting training on {env_name}")
+    print(f"Starting training on {env_config['id']}")
     print(f"State dimension: {state_dim}")
     print(f"Action dimension: {action_dim}")
     print("-" * 50)
@@ -148,11 +153,11 @@ def plot_training_results(episode_rewards, episode_lengths, window=100):
     plt.show()
 
 
-def test_agent(env_name='CartPole-v1', model_path='ppo_model_final.pth', num_episodes=10):
+def test_agent(env_config=ENV_CONFIG, model_path='ppo_model_final.pth', num_episodes=10):
     """Test trained agent."""
     # Create environment
-    env = gym.make(env_name, render_mode='human')
-    
+    env = gym.make(**env_config, render_mode='human')
+
     # Get environment dimensions
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.n
@@ -165,9 +170,9 @@ def test_agent(env_name='CartPole-v1', model_path='ppo_model_final.pth', num_epi
     
     # Load trained model
     agent.load(model_path)
-    
-    print(f"Testing agent on {env_name} for {num_episodes} episodes")
-    
+
+    print(f"Testing agent on {env_config['id']} for {num_episodes} episodes")
+
     total_rewards = []
     
     for episode in range(num_episodes):
@@ -190,15 +195,24 @@ def test_agent(env_name='CartPole-v1', model_path='ppo_model_final.pth', num_epi
 
 
 if __name__ == "__main__":
-    # Train the agent
-    agent, rewards, lengths = train_ppo(
-        env_name='CartPole-v1',
-        total_timesteps=50000,
-        save_freq=10000
-    )
-    
-    # Plot results
-    plot_training_results(rewards, lengths)
-    
+    import argparse
+    parser = argparse.ArgumentParser(description="Train or test PPO agent.")
+    parser.add_argument('--mode', choices=['train', 'test'], default='train', help='Mode: train or test the agent')
+    parser.add_argument('--model_path', type=str, default='ppo_model_final.pth', help='Path to the trained model for testing')
+    parser.add_argument('--test_episodes', type=int, default=10, help='Number of episodes to test the agent')
+    parser.add_argument('--timesteps', type=int, default=500000, help='Total training timesteps')
+    args = parser.parse_args()
+
+    if args.mode == 'train':
+        # Train the agent
+        agent, rewards, lengths = train_ppo(
+            env_config=ENV_CONFIG,
+            total_timesteps=args.timesteps,
+            save_freq=10000
+        )
+        
+        # Plot results
+        plot_training_results(rewards, lengths)
+
     # Test the trained agent
-    test_agent(model_path='ppo_model_final.pth', num_episodes=5)
+    test_agent(model_path=args.model_path, num_episodes=args.test_episodes)
