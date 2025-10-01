@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 from ppo import PPOAgent
 
 ENV_CONFIG = {
-    "id": "LunarLander-v3",
-    "continuous": False,
+    "id": "BipedalWalker-v3", # "LunarLander-v3",
+    # "continuous": True,
 }
 
 
@@ -28,8 +28,8 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000):
     state_dim = env.observation_space.shape[0]
     if isinstance(env.action_space, gym.spaces.Discrete):
         action_dim = env.action_space.n
-    else:
-        raise NotImplementedError("Only discrete action spaces are supported")
+    elif isinstance(env.action_space, gym.spaces.Box):
+        action_dim = env.action_space.shape[0]
     
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -50,7 +50,8 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000):
         buffer_size=2048,
         batch_size=64,
         epochs=10,
-        device=device
+        device=device,
+        continuous_space=env.action_space if isinstance(env.action_space, gym.spaces.Box) else None
     )
     
     # Training variables
@@ -160,14 +161,22 @@ def test_agent(env_config=ENV_CONFIG, model_path='ppo_model_final.pth', num_epis
 
     # Get environment dimensions
     state_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.n
+    if isinstance(env.action_space, gym.spaces.Discrete):
+        action_dim = env.action_space.n
+    elif isinstance(env.action_space, gym.spaces.Box):
+        action_dim = env.action_space.shape[0]
     
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Initialize agent
-    agent = PPOAgent(state_dim=state_dim, action_dim=action_dim, device=device)
-    
+    agent = PPOAgent(
+        state_dim=state_dim, 
+        action_dim=action_dim, 
+        device=device, 
+        continuous_space=env.action_space if isinstance(env.action_space, gym.spaces.Box) else None
+    )
+
     # Load trained model
     agent.load(model_path)
 
@@ -200,7 +209,7 @@ if __name__ == "__main__":
     parser.add_argument('--mode', choices=['train', 'test'], default='train', help='Mode: train or test the agent')
     parser.add_argument('--model_path', type=str, default='ppo_model_final.pth', help='Path to the trained model for testing')
     parser.add_argument('--test_episodes', type=int, default=10, help='Number of episodes to test the agent')
-    parser.add_argument('--timesteps', type=int, default=500000, help='Total training timesteps')
+    parser.add_argument('--timesteps', type=int, default=100000, help='Total training timesteps')
     args = parser.parse_args()
 
     if args.mode == 'train':

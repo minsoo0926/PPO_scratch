@@ -26,7 +26,8 @@ class PPOAgent:
         buffer_size=2048,
         batch_size=64,
         epochs=10,
-        device='cpu'
+        device='cpu',
+        continuous_space=None
     ):
         """
         Initialize PPO agent.
@@ -46,6 +47,7 @@ class PPOAgent:
             batch_size (int): Mini-batch size for training
             epochs (int): Number of training epochs per update
             device (str): Device to run on
+            continuous_space (Gym.spaces.Box): Continuous action space if applicable
         """
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -58,9 +60,10 @@ class PPOAgent:
         self.batch_size = batch_size
         self.epochs = epochs
         self.device = device
+        self.continuous_space = continuous_space
         
         # Initialize network and optimizer
-        self.network = ActorCritic(state_dim, action_dim, hidden_dim).to(device)
+        self.network = ActorCritic(state_dim, action_dim, hidden_dim, continuous_space).to(device)
         self.optimizer = optim.Adam(self.network.parameters(), lr=lr)
         
         # Initialize memory buffer
@@ -96,8 +99,13 @@ class PPOAgent:
             else:
                 action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0))
         
-        return action.item(), log_prob.item(), value.item()
-    
+        if self.continuous_space:
+            action = action.cpu().numpy().flatten()
+            log_prob = log_prob.cpu().numpy().flatten()
+        else:
+            action = action.item()
+        return action, log_prob, value.item()
+
     def store_experience(self, state, action, reward, value, log_prob, done):
         """Store experience in memory buffer."""
         self.memory.store(state, action, reward, value, log_prob, done)
