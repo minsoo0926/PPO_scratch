@@ -120,17 +120,17 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
     # Initialize PPO agent using factory function
     agent = create_ppo_agent(
         env,
-        lr=3e-4,
-        gamma=0.99,
-        lam=0.95,
-        clip_ratio=0.2,
-        value_coef=0.5,
-        entropy_coef=0.01,
-        max_grad_norm=0.5,
+        lr=env_config.get('lr', 3e-4),
+        gamma=env_config.get('gamma', 0.99),
+        lam=env_config.get('lam', 0.95),
+        clip_ratio=env_config.get('clip_ratio', 0.2),
+        value_coef=env_config.get('value_coef', 0.5),
+        entropy_coef=env_config.get('entropy_coef', 0.01),
+        max_grad_norm=env_config.get('max_grad_norm', 0.5),
         hidden_dim=env_config.get('hidden_dim', 64),
-        buffer_size=2048,
-        batch_size=64,
-        epochs=10,
+        buffer_size=env_config.get('buffer_size', 2048),
+        batch_size=env_config.get('batch_size', 64),
+        epochs=env_config.get('epochs', 10),
         device=device_str
     )
     

@@ -63,7 +63,7 @@ long-train: ## Long training (1M timesteps, save every 50k)
 
 resume: ## Resume training from a model checkpoint (use MODEL=filename)
 	@echo "$(BLUE)Resuming training from $(MODEL)...$(NC)"
-	$(PYTHON) train.py --mode train --resume_from $(MODEL) --timesteps $(TIMESTEPS) --save_freq $(SAVE_FREQ)
+	$(PYTHON) train.py --mode train --resume_from $(MODEL) --timesteps 1000000 --save_freq $(SAVE_FREQ)
 
 test: ## Test the trained agent
 	@echo "$(BLUE)Testing agent for $(TEST_EPISODES) episodes...$(NC)"
