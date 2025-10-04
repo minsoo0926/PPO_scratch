@@ -152,7 +152,7 @@ class BasePPOAgent(ABC):
             filepath (str): Path to the saved model
             strict (bool): Whether to use strict loading for state dict
         """
-        checkpoint = torch.load(filepath, map_location='cpu')
+        checkpoint = torch.load(filepath, map_location='cpu', weights_only=False)
         
         # Check if metadata exists (for backward compatibility)
         if 'model_metadata' in checkpoint:
@@ -230,6 +230,8 @@ class BasePPOAgent(ABC):
         # Load training stats
         agent.training_stats = checkpoint.get('training_stats', agent.training_stats)
         print("✓ Training stats loaded successfully")
+        
+        return agent
     
     @classmethod
     def get_model_info(cls, filepath):

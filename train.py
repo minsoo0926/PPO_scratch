@@ -108,7 +108,7 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
         resume_from (str, optional): Model filename to resume training from
     """
     # Create environment
-    env: gym.Env = gym.make(**env_config, render_mode=None)
+    env: gym.Env = gym.make(env_config['id'], render_mode=None)
     
     # Print action space information
     print_action_space_info(env)
@@ -127,7 +127,7 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
         value_coef=0.5,
         entropy_coef=0.01,
         max_grad_norm=0.5,
-        hidden_dim=512,
+        hidden_dim=env_config.get('hidden_dim', 64),
         buffer_size=2048,
         batch_size=64,
         epochs=10,
@@ -270,9 +270,6 @@ def test_agent(env_config=ENV_CONFIG, model_path=None, num_episodes=10):
     # Set device
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
     
-    # Initialize agent using factory function
-    agent = create_ppo_agent(env, device=device_str)
-
     # Determine model path
     if model_path is None:
         # Try to find latest model for this environment
@@ -297,8 +294,14 @@ def test_agent(env_config=ENV_CONFIG, model_path=None, num_episodes=10):
                 env.close()
                 return
 
-    # Load trained model
-    agent.load(model_path)
+    # Import the agent classes to use the class method
+    from ppo.ppo_agent import BasePPOAgent
+    
+    # Load trained model using class method (returns new instance)
+    agent = BasePPOAgent.load(model_path)
+    
+    # Set model to evaluation mode
+    agent.network.eval()
 
     print(f"Testing agent on {env_config['id']} for {num_episodes} episodes")
 
@@ -310,8 +313,9 @@ def test_agent(env_config=ENV_CONFIG, model_path=None, num_episodes=10):
         done = False
         
         while not done:
-            # Get deterministic action
-            action, _, _ = agent.get_action(state, deterministic=True)
+            # Get deterministic action (no gradient computation needed)
+            with torch.no_grad():
+                action, _, _ = agent.get_action(state, deterministic=True)
             state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
             episode_reward += float(reward)
