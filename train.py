@@ -409,7 +409,7 @@ if __name__ == "__main__":
                        help='Mode: train, test, list models, or clean old models')
     parser.add_argument('--model_path', type=str, default=None, 
                        help='Path to the trained model for testing (auto-detects latest if not specified)')
-    parser.add_argument('--resume_from', type=str, default='ppo_model_final.pth', 
+    parser.add_argument('--resume_from', type=str, default=None, 
                        help='Model filename to resume training from')
     parser.add_argument('--test_episodes', type=int, default=10, help='Number of episodes to test the agent')
     parser.add_argument('--timesteps', type=int, default=100000, help='Total training timesteps')

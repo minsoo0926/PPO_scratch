@@ -8,6 +8,7 @@ TIMESTEPS ?= 100000
 SAVE_FREQ ?= 10000
 TEST_EPISODES ?= 10
 KEEP_MODELS ?= 5
+MODEL ?= ppo_model_final.pth
 
 # Python command (adjust if using different environment)
 PYTHON ?= python
@@ -61,15 +62,8 @@ long-train: ## Long training (1M timesteps, save every 50k)
 	$(PYTHON) train.py --mode train --timesteps 1000000 --save_freq 50000
 
 resume: ## Resume training from a model checkpoint (use MODEL=filename)
-ifndef MODEL
-	@echo "$(RED)Error: Please specify MODEL=filename$(NC)"
-	@echo "$(YELLOW)Example: make resume MODEL=ppo_model_50000.pth$(NC)"
-	@echo "$(YELLOW)Available models:$(NC)"
-	@$(PYTHON) train.py --mode list
-else
 	@echo "$(BLUE)Resuming training from $(MODEL)...$(NC)"
 	$(PYTHON) train.py --mode train --resume_from $(MODEL) --timesteps $(TIMESTEPS) --save_freq $(SAVE_FREQ)
-endif
 
 test: ## Test the trained agent
 	@echo "$(BLUE)Testing agent for $(TEST_EPISODES) episodes...$(NC)"
