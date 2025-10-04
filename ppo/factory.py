@@ -23,8 +23,9 @@ def create_ppo_agent(env, **kwargs):
     
     elif isinstance(env.action_space, gym.spaces.Box):
         action_dim = env.action_space.shape[0]
-        action_low = env.action_space.low
-        action_high = env.action_space.high
+        # Convert numpy arrays to scalars or lists as needed
+        action_low = float(env.action_space.low[0]) if len(env.action_space.low) == 1 else env.action_space.low.tolist()
+        action_high = float(env.action_space.high[0]) if len(env.action_space.high) == 1 else env.action_space.high.tolist()
         return ContinuousPPOAgent(
             state_dim=state_dim, 
             action_dim=action_dim,

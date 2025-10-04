@@ -99,11 +99,9 @@ class ContinuousActorCritic(BaseActorCritic):
     def __init__(self, state_dim, action_dim, hidden_dim=64, action_low=-1.0, action_high=1.0):
         super().__init__(state_dim, action_dim, hidden_dim)
         
-        # Action space bounds
-        self.action_low = torch.tensor(action_low, dtype=torch.float32)
-        self.action_high = torch.tensor(action_high, dtype=torch.float32)
-        self.action_scale = (self.action_high - self.action_low) / 2.0
-        self.action_bias = (self.action_high + self.action_low) / 2.0
+        # Store action bounds as scalars for now, convert to tensors in forward pass
+        self.action_low_val = action_low
+        self.action_high_val = action_high
         
         # Actor head - outputs mean for normal distribution
         self.actor_mean = nn.Linear(hidden_dim, action_dim)
@@ -124,25 +122,31 @@ class ContinuousActorCritic(BaseActorCritic):
         std = torch.exp(log_std)
         dist = Normal(action_mean, std)
         
+        # Create action space tensors on the same device as the input
+        device = action_mean.device
+        action_low = torch.tensor(self.action_low_val, device=device, dtype=torch.float32)
+        action_high = torch.tensor(self.action_high_val, device=device, dtype=torch.float32)
+        action_scale = (action_high - action_low) / 2.0
+        action_bias = (action_high + action_low) / 2.0
+        
         if action is None:
             # Sample from normal distribution
             raw_action = dist.rsample()
         else:
             # Convert action back to raw space for log_prob calculation
-            raw_action = torch.atanh(torch.clamp(
-                (action - self.action_bias.to(action.device)) / self.action_scale.to(action.device), 
-                -0.999, 0.999
-            ))
+            normalized_action = (action - action_bias) / action_scale
+            raw_action = torch.atanh(torch.clamp(normalized_action, -0.95, 0.95))
         
         # Calculate log probability in raw space
         log_prob = dist.log_prob(raw_action)
         entropy = dist.entropy()
         
         # Apply tanh squashing and scale to action bounds
-        action = torch.tanh(raw_action) * self.action_scale.to(raw_action.device) + self.action_bias.to(raw_action.device)
+        tanh_raw = torch.tanh(raw_action)
+        action = tanh_raw * action_scale + action_bias
         
         # Apply Jacobian correction for tanh transformation
-        log_prob = log_prob - torch.log(self.action_scale.to(raw_action.device) * (1 - torch.tanh(raw_action).pow(2)) + 1e-6)
+        log_prob = log_prob - torch.log(action_scale * (1 - tanh_raw.pow(2)) + 1e-6)
         
         return action, log_prob, entropy, value
 
@@ -152,18 +156,24 @@ class ContinuousActorCritic(BaseActorCritic):
         std = torch.exp(log_std)
         dist = Normal(action_mean, std)
         
+        # Create action space tensors on the same device as the input
+        device = action.device
+        action_low = torch.tensor(self.action_low_val, device=device, dtype=torch.float32)
+        action_high = torch.tensor(self.action_high_val, device=device, dtype=torch.float32)
+        action_scale = (action_high - action_low) / 2.0
+        action_bias = (action_high + action_low) / 2.0
+        
         # Convert action back to raw space
-        raw_action = torch.atanh(torch.clamp(
-            (action - self.action_bias.to(action.device)) / self.action_scale.to(action.device), 
-            -0.999, 0.999
-        ))
+        normalized_action = (action - action_bias) / action_scale
+        raw_action = torch.atanh(torch.clamp(normalized_action, -0.95, 0.95))
         
         # Calculate log probability and entropy in raw space
         log_prob = dist.log_prob(raw_action)
         entropy = dist.entropy()
         
         # Apply Jacobian correction for tanh transformation
-        log_prob = log_prob - torch.log(self.action_scale.to(action.device) * (1 - torch.tanh(raw_action).pow(2)) + 1e-6)
+        tanh_raw = torch.tanh(raw_action)
+        log_prob = log_prob - torch.log(action_scale * (1 - tanh_raw.pow(2)) + 1e-6)
         
         return log_prob, entropy, value
 

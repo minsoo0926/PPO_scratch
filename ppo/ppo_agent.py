@@ -250,8 +250,14 @@ class ContinuousPPOAgent(BasePPOAgent):
         with torch.no_grad():
             if deterministic:
                 action_mean, value, _ = self.network(state.unsqueeze(0))
-                action = action_mean
-                log_prob = torch.zeros(action_mean.shape, device=self.device)
+                # For deterministic actions, use the mean and compute action bounds  
+                device = action_mean.device
+                action_low = torch.tensor(self.action_low, device=device, dtype=torch.float32)
+                action_high = torch.tensor(self.action_high, device=device, dtype=torch.float32)
+                action_scale = (action_high - action_low) / 2.0
+                action_bias = (action_high + action_low) / 2.0
+                action = torch.tanh(action_mean) * action_scale + action_bias
+                log_prob = torch.zeros(action.shape, device=self.device)
             else:
                 action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0))
         
@@ -281,7 +287,7 @@ class ContinuousPPOAgent(BasePPOAgent):
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
         # Convert to tensors and sum log probs over action dimensions
-        old_log_probs = old_log_probs.sum(dim=-1).detach()
+        old_log_probs = old_log_probs.sum(dim=-1, keepdim=False).detach()
         
         # Training loop
         for epoch in range(self.epochs):
