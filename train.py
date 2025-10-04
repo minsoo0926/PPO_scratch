@@ -265,7 +265,7 @@ def plot_training_results(episode_rewards, episode_lengths, window=100):
 def test_agent(env_config=ENV_CONFIG, model_path=None, num_episodes=10):
     """Test trained agent."""
     # Create environment
-    env: gym.Env = gym.make(**env_config, render_mode='human')
+    env: gym.Env = gym.make(env_config['id'], render_mode='human')
 
     # Set device
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -409,7 +409,7 @@ if __name__ == "__main__":
                        help='Mode: train, test, list models, or clean old models')
     parser.add_argument('--model_path', type=str, default=None, 
                        help='Path to the trained model for testing (auto-detects latest if not specified)')
-    parser.add_argument('--resume_from', type=str, default=None, 
+    parser.add_argument('--resume_from', type=str, default='ppo_model_final.pth', 
                        help='Model filename to resume training from')
     parser.add_argument('--test_episodes', type=int, default=10, help='Number of episodes to test the agent')
     parser.add_argument('--timesteps', type=int, default=100000, help='Total training timesteps')
