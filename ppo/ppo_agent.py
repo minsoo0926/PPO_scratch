@@ -384,8 +384,10 @@ class DiscretePPOAgent(BasePPOAgent):
                 # Forward pass
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
-                # Compute policy loss
-                ratio = torch.exp(new_log_probs - batch_old_log_probs)
+                # Compute policy loss with clipped log probability ratio
+                log_ratio = new_log_probs - batch_old_log_probs
+                log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
+                ratio = torch.exp(log_ratio)
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
@@ -418,7 +420,7 @@ class DiscretePPOAgent(BasePPOAgent):
 class ContinuousPPOAgent(BasePPOAgent):
     """PPO Agent for continuous action spaces."""
 
-    def __init__(self, state_dim, action_dim, action_low=-1.0, action_high=1.0, **kwargs):
+    def __init__(self, state_dim, action_dim, action_low=np.array([-1.0]), action_high=np.array([1.0]), **kwargs):
         """Initialize continuous PPO agent with action bounds."""
         self.action_low = action_low
         self.action_high = action_high
@@ -507,8 +509,10 @@ class ContinuousPPOAgent(BasePPOAgent):
                 new_log_probs = new_log_probs.sum(dim=-1)
                 entropy = entropy.sum(dim=-1)
                 
-                # Compute policy loss
-                ratio = torch.exp(new_log_probs - batch_old_log_probs)
+                # Compute policy loss with clipped log probability ratio
+                log_ratio = new_log_probs - batch_old_log_probs
+                log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
+                ratio = torch.exp(log_ratio)
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()

@@ -4,10 +4,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical, Normal
+import numpy as np
 from abc import ABC, abstractmethod
 
 LOG_STD_MAX = 2.0
-LOG_STD_MIN = -20.0
+LOG_STD_MIN = -5.0
 
 
 class BaseActorCritic(nn.Module, ABC):
@@ -29,9 +30,9 @@ class BaseActorCritic(nn.Module, ABC):
         # Shared layers
         self.shared_layers = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
-            nn.ReLU(),
+            nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU()
+            nn.Tanh()
         )
         
         # Critic head (value network)
@@ -62,7 +63,7 @@ class DiscreteActorCritic(BaseActorCritic):
         # Actor head (policy network) - outputs logits for categorical distribution
         self.actor = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.Tanh(),
             nn.Linear(hidden_dim, action_dim)
         )
 
@@ -100,7 +101,7 @@ class DiscreteActorCritic(BaseActorCritic):
 class ContinuousActorCritic(BaseActorCritic):
     """Actor-Critic network for continuous action spaces with tanh squashing."""
 
-    def __init__(self, state_dim, action_dim, hidden_dim=64, action_low=-1.0, action_high=1.0):
+    def __init__(self, state_dim, action_dim, hidden_dim=64, action_low=np.array([-1.0]), action_high=np.array([1.0])):
         super().__init__(state_dim, action_dim, hidden_dim)
         
         # Store action bounds - will be converted to tensors on first forward pass
@@ -113,8 +114,7 @@ class ContinuousActorCritic(BaseActorCritic):
         self.actor_mean = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.Tanh(),
-            nn.Linear(hidden_dim, action_dim),
-            nn.Tanh()
+            nn.Linear(hidden_dim, action_dim)
         )
         # Learnable log standard deviation parameter
         self.log_std = nn.Parameter(torch.zeros(action_dim))
@@ -146,7 +146,7 @@ class ContinuousActorCritic(BaseActorCritic):
         raw_action_mean, value, log_std = self.forward(state)
         std = torch.exp(log_std)
         
-        # Create normal distribution in raw (pre-tanh) space
+        # Create normal distribution in raw space
         dist = Normal(raw_action_mean, std)
         
         if action is None:
@@ -163,9 +163,10 @@ class ContinuousActorCritic(BaseActorCritic):
         log_prob = dist.log_prob(raw_action).sum(dim=-1, keepdim=True)
         entropy = dist.entropy().sum(dim=-1, keepdim=True)
         
-        # Scale to actual action bounds (action_scale and action_bias are guaranteed to exist after forward)
+        # Apply tanh to constrain to [-1, 1] then scale to actual action bounds
         assert self.action_scale is not None and self.action_bias is not None
-        final_action = raw_action * self.action_scale + self.action_bias
+        squashed_action = torch.tanh(raw_action)
+        final_action = squashed_action * self.action_scale + self.action_bias
         
         return final_action, log_prob, entropy, value
 
@@ -189,14 +190,3 @@ class ContinuousActorCritic(BaseActorCritic):
         entropy = dist.entropy().sum(dim=-1, keepdim=True)
         
         return log_prob, entropy, value
-
-
-# Legacy class for backward compatibility
-class ActorCritic(DiscreteActorCritic):
-    """Legacy ActorCritic class - defaults to discrete actions for backward compatibility."""
-    
-    def __init__(self, state_dim, action_dim, hidden_dim=64, continuous_space=None):
-        if continuous_space is not None:
-            # If continuous_space is provided, create ContinuousActorCritic instead
-            raise ValueError("Use ContinuousActorCritic directly for continuous action spaces")
-        super().__init__(state_dim, action_dim, hidden_dim)
