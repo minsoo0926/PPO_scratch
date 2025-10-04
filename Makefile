@@ -1,10 +1,9 @@
 # PPO Training Makefile
 # Simplified commands for PPO agent training and management
 
-.PHONY: help install train test list clean resume quick-train long-train setup deps
+.PHONY: help install train test list clean resume quick-train long-train setup deps debug status benchmark check-deps info clean-all test-model
 
-# Default environment settings
-ENV_ID ?= Humanoid-v5
+# Default settings
 TIMESTEPS ?= 100000
 SAVE_FREQ ?= 10000
 TEST_EPISODES ?= 10
@@ -25,8 +24,7 @@ help: ## Show this help message
 	@echo "$(YELLOW)Available commands:$(NC)"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-15s$(NC) %s\n", $$1, $$2}'
 	@echo ""
-	@echo "$(YELLOW)Environment Variables:$(NC)"
-	@echo "  ENV_ID=$(ENV_ID)"
+	@echo "$(YELLOW)Variables:$(NC)"
 	@echo "  TIMESTEPS=$(TIMESTEPS)"
 	@echo "  SAVE_FREQ=$(SAVE_FREQ)"
 	@echo "  TEST_EPISODES=$(TEST_EPISODES)"
@@ -50,7 +48,7 @@ deps: ## Install only basic dependencies (torch, gym, numpy, matplotlib)
 	@echo "$(GREEN)Basic dependencies installed!$(NC)"
 
 train: ## Train PPO agent from scratch
-	@echo "$(BLUE)Starting training for $(ENV_ID)...$(NC)"
+	@echo "$(BLUE)Starting training...$(NC)"
 	@echo "$(YELLOW)Timesteps: $(TIMESTEPS), Save frequency: $(SAVE_FREQ)$(NC)"
 	$(PYTHON) train.py --mode train --timesteps $(TIMESTEPS) --save_freq $(SAVE_FREQ)
 
@@ -89,7 +87,7 @@ else
 endif
 
 list: ## List all saved models for current environment
-	@echo "$(BLUE)Saved models for $(ENV_ID):$(NC)"
+	@echo "$(BLUE)Saved models:$(NC)"
 	$(PYTHON) train.py --mode list
 
 clean: ## Clean old model files (keeps latest $(KEEP_MODELS) models)
@@ -108,19 +106,6 @@ clean-all: ## Remove all model files (WARNING: This deletes everything!)
 		echo "$(GREEN)Operation cancelled.$(NC)"; \
 	fi
 
-# Environment-specific shortcuts
-humanoid: ## Train on Humanoid-v5 environment
-	@echo "$(BLUE)Training on Humanoid-v5...$(NC)"
-	ENV_ID=Humanoid-v5 $(MAKE) train
-
-bipedal: ## Train on BipedalWalker-v3 environment  
-	@echo "$(BLUE)Training on BipedalWalker-v3...$(NC)"
-	ENV_ID=BipedalWalker-v3 $(MAKE) train
-
-lunar: ## Train on LunarLander-v3 environment
-	@echo "$(BLUE)Training on LunarLander-v3...$(NC)"
-	ENV_ID=LunarLander-v3 $(MAKE) train
-
 # Development and debugging
 debug: ## Run training with debug output (short run)
 	@echo "$(BLUE)Debug training run...$(NC)"
@@ -128,7 +113,6 @@ debug: ## Run training with debug output (short run)
 
 status: ## Show training status and model information
 	@echo "$(BLUE)=== PPO Training Status ===$(NC)"
-	@echo "$(YELLOW)Current environment: $(ENV_ID)$(NC)"
 	@echo "$(YELLOW)Available models:$(NC)"
 	@$(PYTHON) train.py --mode list || echo "$(RED)No models found$(NC)"
 	@echo ""
@@ -155,15 +139,14 @@ check-deps: ## Check if required dependencies are installed
 	@$(PYTHON) -c "import numpy; print('✓ NumPy:', numpy.__version__)" || echo "$(RED)✗ NumPy not found$(NC)"
 	@$(PYTHON) -c "import matplotlib; print('✓ Matplotlib:', matplotlib.__version__)" || echo "$(RED)✗ Matplotlib not found$(NC)"
 
-info: ## Show environment and system information
+info: ## Show system information
 	@echo "$(BLUE)=== System Information ===$(NC)"
 	@echo "$(YELLOW)Python version:$(NC)"
 	@$(PYTHON) --version
 	@echo "$(YELLOW)Current directory:$(NC) $$(pwd)"
-	@echo "$(YELLOW)Environment ID:$(NC) $(ENV_ID)"
 	@echo "$(YELLOW)CUDA available:$(NC)"
 	@$(PYTHON) -c "import torch; print('Yes' if torch.cuda.is_available() else 'No')"
-	@echo "$(YELLOW)Available environments:$(NC) Humanoid-v5, BipedalWalker-v3, LunarLander-v3"
+	@echo "$(YELLOW)Environment config:$(NC) Set in config.py"
 
 # Default target
 .DEFAULT_GOAL := help
