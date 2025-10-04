@@ -97,9 +97,13 @@ class PPOAgent:
         
         with torch.no_grad():
             if deterministic:
-                action_logits, value = self.network(state.unsqueeze(0))
-                action = torch.argmax(action_logits, dim=-1)
-                log_prob = torch.zeros(1, device=self.device)
+                action_logits, value, _ = self.network(state.unsqueeze(0))
+                if self.continuous_space:
+                    action = action_logits
+                    log_prob = torch.zeros(action_logits.shape, device=self.device)
+                else:
+                    action = torch.argmax(action_logits, dim=-1)
+                    log_prob = torch.zeros(1, device=self.device)
             else:
                 action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0))
         
@@ -108,6 +112,7 @@ class PPOAgent:
             log_prob = log_prob.cpu().numpy().flatten()
         else:
             action = action.item()
+            log_prob = log_prob.item()
         return action, log_prob, value.item()
 
     def store_experience(self, state, action, reward, value, log_prob, done):
@@ -176,8 +181,10 @@ class PPOAgent:
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
-        # Convert to tensors
+        # Convert to tensors and handle continuous actions
         old_log_probs = old_log_probs.detach()
+        if self.continuous_space is not None and len(old_log_probs.shape) > 1:
+            old_log_probs = old_log_probs.sum(dim=-1, keepdim=True)  # Sum over action dimensions
         
         # Training loop
         for epoch in range(self.epochs):
@@ -200,10 +207,16 @@ class PPOAgent:
                 # Forward pass
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
+                # Handle continuous actions - sum log probs over action dimensions
+                if self.continuous_space is not None and len(new_log_probs.shape) > 1:
+                    new_log_probs = new_log_probs.sum(dim=-1, keepdim=True)
+                    entropy = entropy.sum(dim=-1, keepdim=True)
+                
                 # Compute policy loss
-                ratio = torch.exp(new_log_probs - batch_old_log_probs)
-                surr1 = ratio.sum() * batch_advantages
-                surr2 = torch.clamp(ratio.sum(), 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
+                ratio = torch.exp(new_log_probs.squeeze() - batch_old_log_probs.squeeze())
+                    
+                surr1 = ratio * batch_advantages
+                surr2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # Compute value loss

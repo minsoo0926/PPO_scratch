@@ -75,12 +75,20 @@ class ActorCritic(nn.Module):
             std = torch.exp(log_std)
             dist = Normal(mu, std)
             if action is None:
-                action = dist.rsample()
-            log_prob = dist.log_prob(action)
+                raw_action = dist.rsample()
+            else:
+                raw_action = action
+            
+            log_prob = dist.log_prob(raw_action)
             entropy = dist.entropy()
-            action = torch.tanh(action) * (self.continuous_space.high[0] - self.continuous_space.low[0]) / 2 \
-                + (self.continuous_space.high[0] + self.continuous_space.low[0]) / 2
-            log_prob = log_prob - torch.log(1 - action.pow(2) + 1e-6)
+            
+            # Apply tanh squashing and scale to action space
+            action_range = (self.continuous_space.high[0] - self.continuous_space.low[0]) / 2
+            action_center = (self.continuous_space.high[0] + self.continuous_space.low[0]) / 2
+            action = torch.tanh(raw_action) * action_range + action_center
+            
+            # Jacobian correction for tanh transformation
+            log_prob = log_prob - torch.log(action_range * (1 - torch.tanh(raw_action).pow(2)) + 1e-6)
         else:
             probs = Categorical(logits=action_logits)
             if action is None:
@@ -102,14 +110,22 @@ class ActorCritic(nn.Module):
             tuple: (log_prob, entropy, value)
         """
         action_logits, value, log_std = self.forward(state)
-        if log_std is not None:
+        if log_std is not None and self.continuous_space is not None:
             mu = action_logits
             std = torch.exp(log_std)
             dist = Normal(mu, std)
 
-            log_prob = dist.log_prob(action)
+            # Inverse tanh transformation to get raw action for log_prob calculation
+            # action is scaled and tanh'd, need to reverse this
+            action_range = (self.continuous_space.high[0] - self.continuous_space.low[0]) / 2
+            action_center = (self.continuous_space.high[0] + self.continuous_space.low[0]) / 2
+            raw_action = torch.atanh(torch.clamp((action - action_center) / action_range, -0.999, 0.999))
+            
+            log_prob = dist.log_prob(raw_action)
             entropy = dist.entropy()
-            log_prob = log_prob - torch.log(1 - action.pow(2) + 1e-6)
+            
+            # Jacobian correction for tanh transformation
+            log_prob = log_prob - torch.log(action_range * (1 - ((action - action_center) / action_range).pow(2)) + 1e-6)
         else:
             probs = Categorical(logits=action_logits)
             
