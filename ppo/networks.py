@@ -4,14 +4,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical, Normal
+from abc import ABC, abstractmethod
 
 LOG_STD_MAX = 2.0
 LOG_STD_MIN = -20.0
 
-class ActorCritic(nn.Module):
-    """Actor-Critic network for PPO."""
 
-    def __init__(self, state_dim, action_dim, hidden_dim=64, continuous_space=None):
+class BaseActorCritic(nn.Module, ABC):
+    """Base class for Actor-Critic networks."""
+
+    def __init__(self, state_dim, action_dim, hidden_dim=64):
         """
         Initialize Actor-Critic network.
         
@@ -19,11 +21,10 @@ class ActorCritic(nn.Module):
             state_dim (int): Dimension of state space
             action_dim (int): Dimension of action space
             hidden_dim (int): Hidden layer dimension
-            continuous_space (Gym.spaces.Box): Continuous action space if applicable
         """
         super().__init__()
-
-        self.continuous_space = continuous_space
+        self.state_dim = state_dim
+        self.action_dim = action_dim
         
         # Shared layers
         self.shared_layers = nn.Sequential(
@@ -33,103 +34,146 @@ class ActorCritic(nn.Module):
             nn.ReLU()
         )
         
-        # Actor head (policy network)
-        self.actor = nn.Linear(hidden_dim, action_dim)
-        if continuous_space:
-            self.log_std = nn.Parameter(torch.zeros(action_dim))
-        
         # Critic head (value network)
         self.critic = nn.Linear(hidden_dim, 1)
+
+    def get_value(self, state):
+        """Get state value."""
+        shared_features = self.shared_layers(state)
+        return self.critic(shared_features)
+
+    @abstractmethod
+    def get_action_and_value(self, state, action=None):
+        """Get action, log probability, entropy, and value."""
+        pass
+
+    @abstractmethod
+    def evaluate(self, state, action):
+        """Evaluate actions for given states."""
+        pass
+
+
+class DiscreteActorCritic(BaseActorCritic):
+    """Actor-Critic network for discrete action spaces."""
+
+    def __init__(self, state_dim, action_dim, hidden_dim=64):
+        super().__init__(state_dim, action_dim, hidden_dim)
         
+        # Actor head (policy network) - outputs logits for categorical distribution
+        self.actor = nn.Linear(hidden_dim, action_dim)
+
     def forward(self, state):
-        """
-        Forward pass through both actor and critic.
-        
-        Args:
-            state (torch.Tensor): State tensor
-            
-        Returns:
-            tuple: (action_logits, state_value)
-        """
+        """Forward pass through both actor and critic."""
         shared_features = self.shared_layers(state)
         action_logits = self.actor(shared_features)
         state_value = self.critic(shared_features)
-        log_std = torch.clamp(self.log_std, LOG_STD_MIN, LOG_STD_MAX) if self.continuous_space else None
-
-        return action_logits, state_value, log_std
+        return action_logits, state_value
 
     def get_action_and_value(self, state, action=None):
-        """
-        Get action, log probability, and value for given state.
+        """Get action, log probability, entropy, and value for discrete actions."""
+        action_logits, value = self.forward(state)
+        probs = Categorical(logits=action_logits)
         
-        Args:
-            state (torch.Tensor): State tensor
-            action (torch.Tensor, optional): Action tensor for evaluation
-            
-        Returns:
-            tuple: (action, log_prob, entropy, value)
-        """
-        action_logits, value, log_std = self.forward(state)
-        if self.continuous_space is not None:
-            mu = action_logits
-            std = torch.exp(log_std)
-            dist = Normal(mu, std)
-            if action is None:
-                raw_action = dist.rsample()
-            else:
-                raw_action = action
-            
-            log_prob = dist.log_prob(raw_action)
-            entropy = dist.entropy()
-            
-            # Apply tanh squashing and scale to action space
-            action_range = (self.continuous_space.high[0] - self.continuous_space.low[0]) / 2
-            action_center = (self.continuous_space.high[0] + self.continuous_space.low[0]) / 2
-            action = torch.tanh(raw_action) * action_range + action_center
-            
-            # Jacobian correction for tanh transformation
-            log_prob = log_prob - torch.log(action_range * (1 - torch.tanh(raw_action).pow(2)) + 1e-6)
-        else:
-            probs = Categorical(logits=action_logits)
-            if action is None:
-                action = probs.sample()
-            log_prob = probs.log_prob(action)
-            entropy = probs.entropy()
+        if action is None:
+            action = probs.sample()
+        
+        log_prob = probs.log_prob(action)
+        entropy = probs.entropy()
         
         return action, log_prob, entropy, value
-    
-    def evaluate(self, state, action):
-        """
-        Evaluate actions for given states.
-        
-        Args:
-            state (torch.Tensor): State tensor
-            action (torch.Tensor): Action tensor
-            
-        Returns:
-            tuple: (log_prob, entropy, value)
-        """
-        action_logits, value, log_std = self.forward(state)
-        if log_std is not None and self.continuous_space is not None:
-            mu = action_logits
-            std = torch.exp(log_std)
-            dist = Normal(mu, std)
 
-            # Inverse tanh transformation to get raw action for log_prob calculation
-            # action is scaled and tanh'd, need to reverse this
-            action_range = (self.continuous_space.high[0] - self.continuous_space.low[0]) / 2
-            action_center = (self.continuous_space.high[0] + self.continuous_space.low[0]) / 2
-            raw_action = torch.atanh(torch.clamp((action - action_center) / action_range, -0.999, 0.999))
-            
-            log_prob = dist.log_prob(raw_action)
-            entropy = dist.entropy()
-            
-            # Jacobian correction for tanh transformation
-            log_prob = log_prob - torch.log(action_range * (1 - ((action - action_center) / action_range).pow(2)) + 1e-6)
-        else:
-            probs = Categorical(logits=action_logits)
-            
-            log_prob = probs.log_prob(action)
-            entropy = probs.entropy()
+    def evaluate(self, state, action):
+        """Evaluate discrete actions for given states."""
+        action_logits, value = self.forward(state)
+        probs = Categorical(logits=action_logits)
+        
+        log_prob = probs.log_prob(action)
+        entropy = probs.entropy()
         
         return log_prob, entropy, value
+
+
+class ContinuousActorCritic(BaseActorCritic):
+    """Actor-Critic network for continuous action spaces with tanh squashing."""
+
+    def __init__(self, state_dim, action_dim, hidden_dim=64, action_low=-1.0, action_high=1.0):
+        super().__init__(state_dim, action_dim, hidden_dim)
+        
+        # Action space bounds
+        self.action_low = torch.tensor(action_low, dtype=torch.float32)
+        self.action_high = torch.tensor(action_high, dtype=torch.float32)
+        self.action_scale = (self.action_high - self.action_low) / 2.0
+        self.action_bias = (self.action_high + self.action_low) / 2.0
+        
+        # Actor head - outputs mean for normal distribution
+        self.actor_mean = nn.Linear(hidden_dim, action_dim)
+        # Learnable log standard deviation
+        self.log_std = nn.Parameter(torch.zeros(action_dim))
+
+    def forward(self, state):
+        """Forward pass through both actor and critic."""
+        shared_features = self.shared_layers(state)
+        action_mean = self.actor_mean(shared_features)
+        state_value = self.critic(shared_features)
+        log_std = torch.clamp(self.log_std, LOG_STD_MIN, LOG_STD_MAX)
+        return action_mean, state_value, log_std
+
+    def get_action_and_value(self, state, action=None):
+        """Get action, log probability, entropy, and value for continuous actions."""
+        action_mean, value, log_std = self.forward(state)
+        std = torch.exp(log_std)
+        dist = Normal(action_mean, std)
+        
+        if action is None:
+            # Sample from normal distribution
+            raw_action = dist.rsample()
+        else:
+            # Convert action back to raw space for log_prob calculation
+            raw_action = torch.atanh(torch.clamp(
+                (action - self.action_bias.to(action.device)) / self.action_scale.to(action.device), 
+                -0.999, 0.999
+            ))
+        
+        # Calculate log probability in raw space
+        log_prob = dist.log_prob(raw_action)
+        entropy = dist.entropy()
+        
+        # Apply tanh squashing and scale to action bounds
+        action = torch.tanh(raw_action) * self.action_scale.to(raw_action.device) + self.action_bias.to(raw_action.device)
+        
+        # Apply Jacobian correction for tanh transformation
+        log_prob = log_prob - torch.log(self.action_scale.to(raw_action.device) * (1 - torch.tanh(raw_action).pow(2)) + 1e-6)
+        
+        return action, log_prob, entropy, value
+
+    def evaluate(self, state, action):
+        """Evaluate continuous actions for given states."""
+        action_mean, value, log_std = self.forward(state)
+        std = torch.exp(log_std)
+        dist = Normal(action_mean, std)
+        
+        # Convert action back to raw space
+        raw_action = torch.atanh(torch.clamp(
+            (action - self.action_bias.to(action.device)) / self.action_scale.to(action.device), 
+            -0.999, 0.999
+        ))
+        
+        # Calculate log probability and entropy in raw space
+        log_prob = dist.log_prob(raw_action)
+        entropy = dist.entropy()
+        
+        # Apply Jacobian correction for tanh transformation
+        log_prob = log_prob - torch.log(self.action_scale.to(action.device) * (1 - torch.tanh(raw_action).pow(2)) + 1e-6)
+        
+        return log_prob, entropy, value
+
+
+# Legacy class for backward compatibility
+class ActorCritic(DiscreteActorCritic):
+    """Legacy ActorCritic class - defaults to discrete actions for backward compatibility."""
+    
+    def __init__(self, state_dim, action_dim, hidden_dim=64, continuous_space=None):
+        if continuous_space is not None:
+            # If continuous_space is provided, create ContinuousActorCritic instead
+            raise ValueError("Use ContinuousActorCritic directly for continuous action spaces")
+        super().__init__(state_dim, action_dim, hidden_dim)

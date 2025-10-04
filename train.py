@@ -4,10 +4,11 @@ import numpy as np
 import torch
 import gymnasium as gym
 import matplotlib.pyplot as plt
-from ppo import PPOAgent
+from ppo import create_ppo_agent, print_action_space_info
 
 ENV_CONFIG = {
-    "id": "BipedalWalker-v3", 
+    # "id": "BipedalWalker-v3",
+    "id": "Humanoid-v5", 
     # "id": "LunarLander-v3",
     # "continuous": True,
 }
@@ -23,23 +24,18 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000):
         save_freq (int): Frequency of saving the model (in timesteps)
     """
     # Create environment
-    env = gym.make(**env_config, render_mode=None)
+    env: gym.Env = gym.make(**env_config, render_mode=None)
     
-    # Get environment dimensions
-    state_dim = env.observation_space.shape[0]
-    if isinstance(env.action_space, gym.spaces.Discrete):
-        action_dim = env.action_space.n
-    elif isinstance(env.action_space, gym.spaces.Box):
-        action_dim = env.action_space.shape[0]
+    # Print action space information
+    print_action_space_info(env)
     
     # Set device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    device_str = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device_str}")
     
-    # Initialize PPO agent
-    agent = PPOAgent(
-        state_dim=state_dim,
-        action_dim=action_dim,
+    # Initialize PPO agent using factory function
+    agent = create_ppo_agent(
+        env,
         lr=3e-4,
         gamma=0.99,
         lam=0.95,
@@ -51,8 +47,7 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000):
         buffer_size=2048,
         batch_size=64,
         epochs=10,
-        device=device,
-        continuous_space=env.action_space if isinstance(env.action_space, gym.spaces.Box) else None
+        device=device_str
     )
     
     # Training variables
@@ -62,13 +57,11 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000):
     episode_lengths = []
     
     print(f"Starting training on {env_config['id']}")
-    print(f"State dimension: {state_dim}")
-    print(f"Action dimension: {action_dim}")
     print("-" * 50)
     
     while timestep < total_timesteps:
         state, _ = env.reset()
-        episode_reward = 0
+        episode_reward = 0.0
         episode_length = 0
         done = False
         
@@ -85,7 +78,7 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000):
             
             # Update counters
             timestep += 1
-            episode_reward += reward
+            episode_reward += float(reward)
             episode_length += 1
             
             state = next_state
@@ -158,25 +151,13 @@ def plot_training_results(episode_rewards, episode_lengths, window=100):
 def test_agent(env_config=ENV_CONFIG, model_path='ppo_model_final.pth', num_episodes=10):
     """Test trained agent."""
     # Create environment
-    env = gym.make(**env_config, render_mode='human')
+    env: gym.Env = gym.make(**env_config, render_mode='human')
 
-    # Get environment dimensions
-    state_dim = env.observation_space.shape[0]
-    if isinstance(env.action_space, gym.spaces.Discrete):
-        action_dim = env.action_space.n
-    elif isinstance(env.action_space, gym.spaces.Box):
-        action_dim = env.action_space.shape[0]
-    
     # Set device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_str = "cuda" if torch.cuda.is_available() else "cpu"
     
-    # Initialize agent
-    agent = PPOAgent(
-        state_dim=state_dim, 
-        action_dim=action_dim, 
-        device=device, 
-        continuous_space=env.action_space if isinstance(env.action_space, gym.spaces.Box) else None
-    )
+    # Initialize agent using factory function
+    agent = create_ppo_agent(env, device=device_str)
 
     # Load trained model
     agent.load(model_path)
@@ -187,7 +168,7 @@ def test_agent(env_config=ENV_CONFIG, model_path='ppo_model_final.pth', num_epis
     
     for episode in range(num_episodes):
         state, _ = env.reset()
-        episode_reward = 0
+        episode_reward = 0.0
         done = False
         
         while not done:
@@ -195,7 +176,7 @@ def test_agent(env_config=ENV_CONFIG, model_path='ppo_model_final.pth', num_epis
             action, _, _ = agent.get_action(state, deterministic=True)
             state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
-            episode_reward += reward
+            episode_reward += float(reward)
         
         total_rewards.append(episode_reward)
         print(f"Episode {episode + 1}: Reward = {episode_reward}")
