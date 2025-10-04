@@ -60,7 +60,11 @@ class DiscreteActorCritic(BaseActorCritic):
         super().__init__(state_dim, action_dim, hidden_dim)
         
         # Actor head (policy network) - outputs logits for categorical distribution
-        self.actor = nn.Linear(hidden_dim, action_dim)
+        self.actor = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, action_dim)
+        )
 
     def forward(self, state):
         """Forward pass through both actor and critic."""
@@ -104,7 +108,11 @@ class ContinuousActorCritic(BaseActorCritic):
         self.action_high_val = action_high
         
         # Actor head - outputs mean for normal distribution
-        self.actor_mean = nn.Linear(hidden_dim, action_dim)
+        self.actor_mean = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, action_dim)
+        )
         # Learnable log standard deviation
         self.log_std = nn.Parameter(torch.zeros(action_dim))
 

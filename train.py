@@ -127,7 +127,7 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
         value_coef=0.5,
         entropy_coef=0.01,
         max_grad_norm=0.5,
-        hidden_dim=64,
+        hidden_dim=512,
         buffer_size=2048,
         batch_size=64,
         epochs=10,
