@@ -138,10 +138,10 @@ class BasePPOAgent(ABC):
             save_dict['model_metadata']['action_high'] = self.action_high
 
         torch.save(save_dict, filepath)
-        print(f"Model saved to {filepath}")
-        print(f"  - State dim: {self.state_dim}")
-        print(f"  - Action dim: {self.action_dim}")
-        print(f"  - Agent type: {self.__class__.__name__}")
+        # print(f"Model saved to {filepath}")
+        # print(f"  - State dim: {self.state_dim}")
+        # print(f"  - Action dim: {self.action_dim}")
+        # print(f"  - Agent type: {self.__class__.__name__}")
     
     @classmethod
     def load(cls, filepath, strict=True):
