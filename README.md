@@ -5,11 +5,12 @@ A complete implementation of the Proximal Policy Optimization (PPO) algorithm fr
 ## Features
 
 - **Complete PPO Implementation**: Includes actor-critic networks, experience buffer, and the full PPO algorithm
-- **Gymnasium Compatible**: Works with any Gymnasium environment with discrete action spaces
+- **Gymnasium Compatible**: Compatible with any Gymnasium environment (discrete or continuous)
 - **GAE (Generalized Advantage Estimation)**: Implements GAE for better advantage estimation
+- **Numerical Stability**: Advanced NaN/infinity detection and prevention mechanisms
 - **Flexible Architecture**: Configurable network architecture and hyperparameters
 - **Training Utilities**: Includes training scripts with progress tracking and visualization
-- **Model Persistence**: Save and load trained models
+- **Model Persistence**: Save and load trained models with automatic compatibility checking
 
 ## Installation
 
@@ -28,22 +29,25 @@ pip install -r requirements.txt
 
 ### Basic Usage
 
+#### Automatic Agent Selection (Recommended)
+
 ```python
 import gymnasium as gym
-from ppo import PPOAgent
+from ppo import create_ppo_agent
 
-# Create environment
-env = gym.make('CartPole-v1')
+# Create environment (works with both discrete and continuous action spaces)
+env = gym.make('CartPole-v1')  # or 'Pendulum-v1', 'Ant-v5', etc.
 
-# Initialize PPO agent
-agent = PPOAgent(
-    state_dim=env.observation_space.shape[0],
-    action_dim=env.action_space.n,
+# Automatically creates the appropriate agent based on action space
+agent = create_ppo_agent(
+    env,
     lr=3e-4,
-    gamma=0.99
+    gamma=0.99,
+    hidden_dim=64,
+    buffer_size=2048
 )
 
-# Training loop
+# Training loop (same for both discrete and continuous)
 for episode in range(100):
     state, _ = env.reset()
     episode_reward = 0
@@ -62,52 +66,40 @@ for episode in range(100):
             break
     
     # Update agent when buffer is ready
-    if agent.memory.is_full():
+    if len(agent.memory) >= agent.batch_size:
         agent.update()
 ```
 
-### Training with the Provided Script
-
+### Using the Training Script
+- Modify config.py as your training environment
 ```bash
-python train.py
+make train
+make test
 ```
 
-This will train a PPO agent on CartPole-v1 and save the model periodically.
+## Key Features
 
-### Running the Simple Example
+### PPO Algorithm
+- **Actor-Critic Architecture** with clipped surrogate objective
+- **GAE (Generalized Advantage Estimation)** for variance reduction
+- **Multiple training epochs** per batch for sample efficiency
 
-```bash
-python example.py
-```
+### Numerical Stability
+- **NaN/Infinity Detection** with automatic batch skipping
+- **Log Probability Clipping** (±20 range) to prevent overflow
+- **Gradient Clipping** and detailed debugging output
 
-## Algorithm Details
-
-### PPO (Proximal Policy Optimization)
-
-PPO is a policy gradient method that aims to improve training stability by constraining policy updates. Key components include:
-
-1. **Actor-Critic Architecture**: Shared network with separate heads for policy (actor) and value function (critic)
-2. **Clipped Surrogate Objective**: Prevents large policy updates by clipping the probability ratio
-3. **Generalized Advantage Estimation (GAE)**: Reduces variance in advantage estimates
-4. **Multiple Epochs**: Updates the policy multiple times on each batch of data
-
-### Key Hyperparameters
-
-- `lr`: Learning rate (default: 3e-4)
-- `gamma`: Discount factor (default: 0.99)
-- `lam`: GAE lambda parameter (default: 0.95)
-- `clip_ratio`: PPO clipping parameter (default: 0.2)
-- `value_coef`: Value function loss coefficient (default: 0.5)
-- `entropy_coef`: Entropy regularization coefficient (default: 0.01)
+### Hyperparameters
+- `lr=3e-4`, `gamma=0.99`, `lam=0.95`, `clip_ratio=0.2`
+- `value_coef=0.5`, `entropy_coef=0.01`, `hidden_dim=64`
 
 ## API Reference
 
-### PPOAgent
+### create_ppo_agent (Recommended)
 
 ```python
-PPOAgent(
-    state_dim,           # Dimension of state space
-    action_dim,          # Dimension of action space (discrete)
+create_ppo_agent(
+    env,                 # Gymnasium environment
     lr=3e-4,            # Learning rate
     gamma=0.99,         # Discount factor
     lam=0.95,           # GAE lambda
@@ -123,6 +115,15 @@ PPOAgent(
 )
 ```
 
+Automatically creates `DiscretePPOAgent` for discrete action spaces or `ContinuousPPOAgent` for continuous action spaces based on the environment's action space type.
+
+### Manual Agent Classes
+
+For advanced users who need direct control:
+
+**DiscretePPOAgent**: For `gym.spaces.Discrete` action spaces
+**ContinuousPPOAgent**: For `gym.spaces.Box` action spaces (requires `action_low` and `action_high` parameters)
+
 #### Methods
 
 - `get_action(state, deterministic=False)`: Get action for given state
@@ -135,32 +136,17 @@ PPOAgent(
 
 ```
 PPO_scratch/
-├── ppo/
-│   ├── __init__.py          # Package initialization
-│   ├── ppo_agent.py         # Main PPO agent implementation
-│   ├── networks.py          # Neural network architectures
-│   └── memory.py            # Experience buffer
-├── train.py                 # Training script with visualization
-├── example.py               # Simple usage example
-├── requirements.txt         # Dependencies
-└── README.md               # This file
+├── ppo/                     # Main PPO implementation
+├── models/                  # Saved models
+├── train.py                 # Training script  
+├── example.py               # Usage example
+└── config.py                # Configuration
 ```
 
 ## Supported Environments
 
-This implementation works with any Gymnasium environment that has:
-- Discrete action space (`gym.spaces.Discrete`)
-- Box observation space (`gym.spaces.Box`)
+**Automatic compatibility** with Gymnasium environments:
+- **Discrete**: `gym.spaces.Discrete` → `DiscretePPOAgent`  
+- **Continuous**: `gym.spaces.Box` → `ContinuousPPOAgent`
 
-Tested environments:
-- CartPole-v1
-- LunarLander-v2
-- Acrobot-v1
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is open source and available under the MIT License.
+**Tested**: CartPole-v1, LunarLander-v2, Pendulum-v1, BipedalWalker-v3, Ant-v5, Humanoid-v5

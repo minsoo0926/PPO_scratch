@@ -50,6 +50,11 @@ class BasePPOAgent(ABC):
             'total_loss': []
         }
         
+        # Store hyperparameters for recreation during loading
+        self.hidden_dim = hidden_dim
+        self.lr = lr
+        self.buffer_size = buffer_size
+        
         # Initialize network, optimizer and memory (implemented in subclasses)
         self.network = self._create_network(state_dim, action_dim, hidden_dim)
         self.optimizer = optim.Adam(self.network.parameters(), lr=lr)
@@ -103,19 +108,207 @@ class BasePPOAgent(ABC):
         pass
 
     def save(self, filepath):
-        """Save the model."""
-        torch.save({
+        """Save the model with metadata."""
+        save_dict = {
             'network_state_dict': self.network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'training_stats': self.training_stats
-        }, filepath)
+            'training_stats': self.training_stats,
+            # Save model metadata for dimension validation and recreation
+            'model_metadata': {
+                'state_dim': self.state_dim,
+                'action_dim': self.action_dim,
+                'hidden_dim': self.hidden_dim,
+                'lr': self.lr,
+                'buffer_size': self.buffer_size,
+                'agent_type': self.__class__.__name__,
+                'device': str(self.device),
+                'gamma': self.gamma,
+                'lam': self.lam,
+                'clip_ratio': self.clip_ratio,
+                'value_coef': self.value_coef,
+                'entropy_coef': self.entropy_coef,
+                'max_grad_norm': self.max_grad_norm,
+                'batch_size': self.batch_size,
+                'epochs': self.epochs
+            }
+        }
+        
+        if isinstance(self, ContinuousPPOAgent):
+            save_dict['model_metadata']['action_low'] = self.action_low
+            save_dict['model_metadata']['action_high'] = self.action_high
+
+        torch.save(save_dict, filepath)
+        # print(f"Model saved to {filepath}")
+        # print(f"  - State dim: {self.state_dim}")
+        # print(f"  - Action dim: {self.action_dim}")
+        # print(f"  - Agent type: {self.__class__.__name__}")
     
-    def load(self, filepath):
-        """Load the model."""
+    @classmethod
+    def load(cls, filepath, strict=True):
+        """
+        Load the model and automatically adjust current model to match saved model dimensions.
+        
+        Args:
+            filepath (str): Path to the saved model
+            strict (bool): Whether to use strict loading for state dict
+        """
+        checkpoint = torch.load(filepath, map_location='cpu', weights_only=False)
+        
+        # Check if metadata exists (for backward compatibility)
+        if 'model_metadata' in checkpoint:
+            metadata = checkpoint['model_metadata']
+            saved_state_dim = metadata.get('state_dim')
+            saved_action_dim = metadata.get('action_dim')
+            saved_agent_type = metadata.get('agent_type')
+            
+            print(f"Loading model from {filepath}")
+            print(f"  - Saved state dim: {saved_state_dim}")
+            print(f"  - Saved action dim: {saved_action_dim}")
+            print(f"  - Saved agent type: {saved_agent_type}")
+
+        # Create new agent instance with saved dimensions
+        if metadata.get('agent_type') == 'DiscretePPOAgent':
+            agent = DiscretePPOAgent(
+                state_dim=metadata['state_dim'],
+                action_dim=metadata['action_dim'],
+                hidden_dim=metadata['hidden_dim'],
+                lr=metadata['lr'],
+                buffer_size=metadata['buffer_size'],
+                device=metadata.get('device', 'cpu'),
+                gamma=metadata.get('gamma', 0.99),
+                lam=metadata.get('lam', 0.95),
+                clip_ratio=metadata.get('clip_ratio', 0.2),
+                value_coef=metadata.get('value_coef', 0.5),
+                entropy_coef=metadata.get('entropy_coef', 0.01),
+                max_grad_norm=metadata.get('max_grad_norm', 0.5),
+                batch_size=metadata.get('batch_size', 64),
+                epochs=metadata.get('epochs', 10)
+            )
+        elif metadata.get('agent_type') == 'ContinuousPPOAgent':
+            agent = ContinuousPPOAgent(
+                state_dim=metadata['state_dim'],
+                action_dim=metadata['action_dim'],
+                action_low=metadata['action_low'],
+                action_high=metadata['action_high'],
+                hidden_dim=metadata['hidden_dim'],
+                lr=metadata['lr'],
+                buffer_size=metadata['buffer_size'],
+                device=metadata.get('device', 'cpu'),
+                gamma=metadata.get('gamma', 0.99),
+                lam=metadata.get('lam', 0.95),
+                clip_ratio=metadata.get('clip_ratio', 0.2),
+                value_coef=metadata.get('value_coef', 0.5),
+                entropy_coef=metadata.get('entropy_coef', 0.01),
+                max_grad_norm=metadata.get('max_grad_norm', 0.5),
+                batch_size=metadata.get('batch_size', 64),
+                epochs=metadata.get('epochs', 10)
+            )
+        else:
+            raise ValueError(f"Unknown agent type: {metadata.get('agent_type')}")
+
+        # Load network state
+        try:
+            agent.network.load_state_dict(checkpoint['network_state_dict'], strict=strict)
+            print("✓ Network state loaded successfully")
+        except RuntimeError as e:
+            print(f"WARNING: Failed to load network state with strict=True: {e}")
+            print("Trying with strict=False...")
+            try:
+                agent.network.load_state_dict(checkpoint['network_state_dict'], strict=False)
+                print("✓ Network state loaded with strict=False (some parameters may be missing/extra)")
+            except RuntimeError as e2:
+                raise RuntimeError(f"Failed to load network state even with strict=False: {e2}")
+        
+        # Load optimizer state (with error handling)
+        try:
+            agent.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            print("✓ Optimizer state loaded successfully")
+        except Exception as e:
+            print(f"WARNING: Failed to load optimizer state: {e}")
+            print("Continuing without optimizer state (this is usually fine for inference)")
+        
+        # Load training stats
+        agent.training_stats = checkpoint.get('training_stats', agent.training_stats)
+        print("✓ Training stats loaded successfully")
+        
+        return agent
+    
+    @classmethod
+    def get_model_info(cls, filepath):
+        """
+        Get model information without loading the full model.
+        
+        Args:
+            filepath (str): Path to the saved model
+            
+        Returns:
+            dict: Model metadata if available, None otherwise
+        """
+        try:
+            checkpoint = torch.load(filepath, map_location='cpu')
+            if 'model_metadata' in checkpoint:
+                return checkpoint['model_metadata']
+            else:
+                return None
+        except Exception as e:
+            print(f"Error reading model file: {e}")
+            return None
+    
+    @classmethod
+    def is_compatible(cls, filepath, state_dim, action_dim, agent_type=None):
+        """
+        Check if saved model is compatible with given dimensions and agent type.
+        
+        Args:
+            filepath (str): Path to the saved model
+            state_dim (int): Required state dimension
+            action_dim (int): Required action dimension
+            agent_type (str, optional): Required agent type
+            
+        Returns:
+            tuple: (is_compatible: bool, info: str)
+        """
+        info = cls.get_model_info(filepath)
+        
+        if info is None:
+            return False, "No metadata found (old model format)"
+        
+        issues = []
+        
+        if info.get('state_dim') != state_dim:
+            issues.append(f"State dim mismatch: saved={info.get('state_dim')}, required={state_dim}")
+        
+        if info.get('action_dim') != action_dim:
+            issues.append(f"Action dim mismatch: saved={info.get('action_dim')}, required={action_dim}")
+        
+        if agent_type and info.get('agent_type') != agent_type:
+            issues.append(f"Agent type mismatch: saved={info.get('agent_type')}, required={agent_type}")
+        
+        if issues:
+            return False, "; ".join(issues)
+        else:
+            return True, "Model is compatible"
+    
+    def load_network_only(self, filepath, strict=True):
+        """
+        Load only the network weights, skipping optimizer and other data.
+        Useful for inference or transfer learning.
+        
+        Args:
+            filepath (str): Path to the saved model
+            strict (bool): Whether to use strict loading for state dict
+        """
         checkpoint = torch.load(filepath, map_location=self.device)
-        self.network.load_state_dict(checkpoint['network_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.training_stats = checkpoint.get('training_stats', self.training_stats)
+        
+        try:
+            self.network.load_state_dict(checkpoint['network_state_dict'], strict=strict)
+            print(f"✓ Network weights loaded from {filepath}")
+        except RuntimeError as e:
+            if not strict:
+                raise
+            print(f"Failed with strict=True, trying strict=False: {e}")
+            self.network.load_state_dict(checkpoint['network_state_dict'], strict=False)
+            print(f"✓ Network weights loaded from {filepath} (some parameters ignored)")
 
 
 class DiscretePPOAgent(BasePPOAgent):
@@ -191,8 +384,10 @@ class DiscretePPOAgent(BasePPOAgent):
                 # Forward pass
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
-                # Compute policy loss
-                ratio = torch.exp(new_log_probs - batch_old_log_probs)
+                # Compute policy loss with clipped log probability ratio
+                log_ratio = new_log_probs - batch_old_log_probs
+                log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
+                ratio = torch.exp(log_ratio)
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
@@ -225,7 +420,7 @@ class DiscretePPOAgent(BasePPOAgent):
 class ContinuousPPOAgent(BasePPOAgent):
     """PPO Agent for continuous action spaces."""
 
-    def __init__(self, state_dim, action_dim, action_low=-1.0, action_high=1.0, **kwargs):
+    def __init__(self, state_dim, action_dim, action_low=np.array([-1.0]), action_high=np.array([1.0]), **kwargs):
         """Initialize continuous PPO agent with action bounds."""
         self.action_low = action_low
         self.action_high = action_high
@@ -314,8 +509,10 @@ class ContinuousPPOAgent(BasePPOAgent):
                 new_log_probs = new_log_probs.sum(dim=-1)
                 entropy = entropy.sum(dim=-1)
                 
-                # Compute policy loss
-                ratio = torch.exp(new_log_probs - batch_old_log_probs)
+                # Compute policy loss with clipped log probability ratio
+                log_ratio = new_log_probs - batch_old_log_probs
+                log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
+                ratio = torch.exp(log_ratio)
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
