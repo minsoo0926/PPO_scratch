@@ -452,7 +452,7 @@ class ContinuousPPOAgent(BasePPOAgent):
                 action_scale = (action_high - action_low) / 2.0
                 action_bias = (action_high + action_low) / 2.0
                 action = torch.tanh(action_mean) * action_scale + action_bias
-                log_prob = torch.zeros(action.shape, device=self.device)
+                log_prob = torch.zeros(1, device=self.device)
             else:
                 action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0))
         
@@ -482,8 +482,9 @@ class ContinuousPPOAgent(BasePPOAgent):
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
         # Convert to tensors and sum log probs over action dimensions
-        old_log_probs = old_log_probs.sum(dim=-1, keepdim=False).detach()
-        
+        # old_log_probs = old_log_probs.sum(dim=-1, keepdim=False).detach()
+        old_log_probs = old_log_probs.detach()
+
         # Training loop
         for epoch in range(self.epochs):
             # Create mini-batches
@@ -506,25 +507,27 @@ class ContinuousPPOAgent(BasePPOAgent):
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
                 # Sum over action dimensions
-                new_log_probs = new_log_probs.sum(dim=-1)
+                new_log_probs = new_log_probs
                 entropy = entropy.sum(dim=-1)
                 
                 # Compute policy loss with clipped log probability ratio
                 log_ratio = new_log_probs - batch_old_log_probs
-                log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
+                # breakpoint()
+                # log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
                 ratio = torch.exp(log_ratio)
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # Compute value loss
-                value_loss = nn.MSELoss()(new_values.squeeze(), batch_returns)
+                # value_loss = nn.MSELoss()(new_values.squeeze(), batch_returns)
+                value_loss = 0.5 * (batch_returns - new_values.squeeze(-1)).pow(2).mean()
                 
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()
                 
                 # Total loss
-                total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
+                total_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy_loss
                 
                 # Backward pass
                 self.optimizer.zero_grad()
