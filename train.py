@@ -234,11 +234,6 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
             # Update agent when buffer is full
             if agent.memory.is_full():
-                # next_states = None
-                # for i in range(n_envs):
-                #     if not dones[i]:
-                #         next_states = states[i]
-                #         break
                 agent.update(next_states)
 
         # Print progress
@@ -253,7 +248,7 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
         # Save model periodically
         if timestep // save_freq != prior_save // save_freq:
-            model_path = get_model_path(env_config['id'], f"ppo_model_{timestep}.pth")
+            model_path = get_model_path(env_config['id'], f"ppo_model_{timestep // save_freq}.pth")
             agent.save(model_path)
             print(f"Model saved at timestep {timestep}: {model_path}")
             prior_save = timestep

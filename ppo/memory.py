@@ -32,7 +32,7 @@ class BaseMemory(ABC):
 
     def is_full(self):
         """Check if buffer is full."""
-        return self.size == self.buffer_size
+        return self.ptr == self.buffer_length - 1
     
     def __len__(self):
         """Return current size of buffer."""

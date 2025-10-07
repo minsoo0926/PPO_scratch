@@ -81,26 +81,24 @@ class BasePPOAgent(ABC):
         """Store experience in memory buffer."""
         self.memory.store(idx_env, state, action, reward, value, log_prob, done)
 
-    def compute_advantages(self, rewards, values, dones, next_value=0):
+    def compute_advantages(self, rewards, values, dones, next_value):
         """Compute GAE (Generalized Advantage Estimation) advantages."""
         advantages = torch.zeros_like(rewards)
         returns = torch.zeros_like(rewards)
+        batch_len = len(rewards[0])
 
-        gae = torch.zeros_like(rewards[0])
-        next_val = next_value
-        
-        for t in reversed(range(len(rewards))):
-            if t == len(rewards) - 1:
-                next_non_terminal = torch.full_like(rewards[t], 1.0) - dones[t].float()
-                next_value = next_val
+        gae = torch.zeros(size=(self.n_envs, 1), device=self.device)
+
+        for t in reversed(range(batch_len)):
+            if t == batch_len - 1:
+                next_non_terminal = torch.full_like(rewards[:, t:t+1], 1.0) - dones[:, t:t+1].float()
             else:
-                next_non_terminal = torch.full_like(rewards[t], 1.0) - dones[t].float()
-                next_value = values[t + 1]
-            
-            delta = rewards[t] + self.gamma * next_value * next_non_terminal - values[t]
+                next_non_terminal = torch.full_like(rewards[:, t:t+1], 1.0) - dones[:, t:t+1].float()
+                next_value = values[:, t + 1:t + 2]
+            delta = rewards[:, t:t+1] + self.gamma * next_value * next_non_terminal - values[:, t:t+1]
             gae = delta + self.gamma * self.lam * next_non_terminal * gae
-            advantages[t] = gae
-            returns[t] = advantages[t] + values[t]
+            advantages[:, t:t+1] = gae
+            returns[:, t:t+1] = advantages[:, t:t+1] + values[:, t:t+1]
         return advantages, returns
 
     @abstractmethod
@@ -345,13 +343,10 @@ class DiscretePPOAgent(BasePPOAgent):
         states, actions, rewards, values, old_log_probs, dones = self.memory.get()
         
         # Compute next value for advantage calculation
-        next_value = 0
+        next_value = torch.zeros(size=(self.n_envs, 1), device=self.device)
         if next_state is not None:
-            if isinstance(next_state, np.ndarray):
-                next_state = torch.from_numpy(next_state).float().to(self.device)
             with torch.no_grad():
-                _, next_value = self.network(next_state.unsqueeze(0))
-                next_value = next_value.item()
+                _, next_value = self.network(next_state)
         
         # Compute advantages and returns
         advantages, returns = self.compute_advantages(rewards, values, dones, next_value)
@@ -384,7 +379,7 @@ class DiscretePPOAgent(BasePPOAgent):
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
                 # Compute policy loss with clipped log probability ratio
-                log_ratio = new_log_probs - batch_old_log_probs
+                log_ratio = new_log_probs.squeeze(-1) - batch_old_log_probs
                 log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
                 ratio = torch.exp(log_ratio)
                 surr1 = ratio * batch_advantages
@@ -392,7 +387,7 @@ class DiscretePPOAgent(BasePPOAgent):
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # Compute value loss
-                value_loss = nn.MSELoss()(new_values.squeeze(), batch_returns)
+                value_loss = nn.MSELoss()(new_values.squeeze(-1), batch_returns)
                 
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()
@@ -459,13 +454,10 @@ class ContinuousPPOAgent(BasePPOAgent):
         states, actions, rewards, values, old_log_probs, dones = self.memory.get()
         
         # Compute next value for advantage calculation
-        next_value = 0
+        next_value = torch.zeros(size=(self.n_envs, 1), device=self.device)
         if next_state is not None:
-            if isinstance(next_state, np.ndarray):
-                next_state = torch.from_numpy(next_state).float().to(self.device)
             with torch.no_grad():
-                _, next_value, _ = self.network(next_state.unsqueeze(0))
-                next_value = next_value.item()
+                _, next_value, _ = self.network(next_state)
         
         # Compute advantages and returns
         advantages, returns = self.compute_advantages(rewards, values, dones, next_value)
@@ -478,6 +470,14 @@ class ContinuousPPOAgent(BasePPOAgent):
 
         # Training loop
         for epoch in range(self.epochs):
+            # Flatten the first dimension
+            states = states.view(-1, self.state_dim)
+            actions = actions.view(-1, self.action_dim)
+            old_log_probs = old_log_probs.view(-1)
+            advantages = advantages.view(-1)
+            returns = returns.view(-1)
+            values = values.view(-1)
+
             # Create mini-batches
             indices = torch.randperm(len(states), device=self.device)
             
@@ -497,12 +497,8 @@ class ContinuousPPOAgent(BasePPOAgent):
                 # Forward pass
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
-                # Sum over action dimensions
-                new_log_probs = new_log_probs
-                entropy = entropy.sum(dim=-1)
-                
                 # Compute policy loss with clipped log probability ratio
-                log_ratio = new_log_probs - batch_old_log_probs
+                log_ratio = new_log_probs.squeeze(-1) - batch_old_log_probs
                 log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
                 ratio = torch.exp(log_ratio)
                 surr1 = ratio * batch_advantages
@@ -510,14 +506,14 @@ class ContinuousPPOAgent(BasePPOAgent):
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # Compute value loss
-                value_loss = nn.MSELoss()(new_values.squeeze(), batch_returns)
+                value_loss = nn.MSELoss()(new_values.squeeze(-1), batch_returns)
                 
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()
                 
                 # Total loss
                 total_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy_loss
-                
+
                 # Backward pass
                 self.optimizer.zero_grad()
                 total_loss.backward()
