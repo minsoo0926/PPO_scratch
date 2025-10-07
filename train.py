@@ -217,7 +217,7 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
             # Update counters
             timestep += np.sum(~dones)  # Count active environments
             new_dones = new_dones.cpu().numpy()
-            
+
             # Update done status and collect episode stats
             newly_done = new_dones & ~dones
             if np.any(newly_done):

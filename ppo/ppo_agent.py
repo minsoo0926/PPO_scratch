@@ -101,7 +101,6 @@ class BasePPOAgent(ABC):
             gae = delta + self.gamma * self.lam * next_non_terminal * gae
             advantages[t] = gae
             returns[t] = advantages[t] + values[t]
-        
         return advantages, returns
 
     @abstractmethod

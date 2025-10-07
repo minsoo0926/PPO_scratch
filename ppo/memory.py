@@ -73,7 +73,7 @@ class DiscreteMemory(BaseMemory):
         self.log_probs[idx_env, self.ptr] = float(log_prob)
         self.dones[idx_env, self.ptr] = bool(done)
 
-        self.ptr = (self.ptr + 1) % self.buffer_length
+        self.ptr = (self.ptr + 1) % self.buffer_length if idx_env == self.n_envs - 1 else self.ptr
         self.size = min(self.size + self.n_envs, self.buffer_length)
 
     def get(self):
@@ -121,7 +121,7 @@ class ContinuousMemory(BaseMemory):
         self.log_probs[idx_env, self.ptr] = log_prob
         self.dones[idx_env, self.ptr] = bool(done)
 
-        self.ptr = (self.ptr + 1) % self.buffer_length
+        self.ptr = (self.ptr + 1) % self.buffer_length if idx_env == self.n_envs - 1 else self.ptr
         self.size = min(self.size + self.n_envs, self.buffer_length)
 
     def get(self):
