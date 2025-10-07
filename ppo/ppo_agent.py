@@ -367,6 +367,9 @@ class DiscretePPOAgent(BasePPOAgent):
             returns = returns.view(-1)
             values = values.view(-1)
 
+            # Update observation normalization
+            self.network.update_obs_rms(states)
+
             # Create mini-batches
             indices = torch.randperm(len(states), device=self.device)
             
@@ -484,6 +487,9 @@ class ContinuousPPOAgent(BasePPOAgent):
             advantages = advantages.view(-1)
             returns = returns.view(-1)
             values = values.view(-1)
+
+            # Update observation normalization
+            self.network.update_obs_rms(states)
 
             # Create mini-batches
             indices = torch.randperm(len(states), device=self.device)

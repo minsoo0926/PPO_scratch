@@ -67,7 +67,7 @@ resume: ## Resume training from a model checkpoint (use MODEL=filename)
 
 test: ## Test the trained agent
 	@echo "$(BLUE)Testing agent for $(TEST_EPISODES) episodes...$(NC)"
-	$(PYTHON) train.py --mode test --test_episodes $(TEST_EPISODES)
+	$(PYTHON) train.py --mode test --test_episodes $(TEST_EPISODES) --model_path $(MODEL)
 
 test-model: ## Test a specific model (use MODEL=filename)
 ifndef MODEL
