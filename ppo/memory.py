@@ -7,8 +7,8 @@ from abc import ABC, abstractmethod
 
 class BaseMemory(ABC):
     """Base class for PPO memory buffers."""
-    
-    def __init__(self, buffer_size, state_dim, device='cpu'):
+
+    def __init__(self, n_envs, buffer_size, state_dim, device='cpu'):
         """
         Initialize memory buffer.
         
@@ -17,20 +17,22 @@ class BaseMemory(ABC):
             state_dim (int): Dimension of state space
             device (str): Device to store tensors on
         """
+        self.n_envs = n_envs
         self.buffer_size = buffer_size
+        self.buffer_length = buffer_size // n_envs
         self.device = device
         self.ptr = 0
         self.size = 0
         
         # Initialize common buffers
-        self.states = torch.zeros((buffer_size, state_dim), dtype=torch.float32, device=device)
-        self.rewards = torch.zeros(buffer_size, dtype=torch.float32, device=device)
-        self.values = torch.zeros(buffer_size, dtype=torch.float32, device=device)
-        self.dones = torch.zeros(buffer_size, dtype=torch.bool, device=device)
+        self.states = torch.zeros((n_envs, self.buffer_length, state_dim), dtype=torch.float32, device=device)
+        self.rewards = torch.zeros((n_envs, self.buffer_length), dtype=torch.float32, device=device)
+        self.values = torch.zeros((n_envs, self.buffer_length), dtype=torch.float32, device=device)
+        self.dones = torch.zeros((n_envs, self.buffer_length), dtype=torch.bool, device=device)
 
     def is_full(self):
         """Check if buffer is full."""
-        return self.size == self.buffer_size
+        return self.ptr == self.buffer_length - 1
     
     def __len__(self):
         """Return current size of buffer."""
@@ -42,7 +44,7 @@ class BaseMemory(ABC):
         self.size = 0
 
     @abstractmethod
-    def store(self, state, action, reward, value, log_prob, done):
+    def store(self, idx_env, state, action, reward, value, log_prob, done):
         """Store a single experience."""
         pass
 
@@ -54,106 +56,96 @@ class BaseMemory(ABC):
 
 class DiscreteMemory(BaseMemory):
     """Memory buffer for discrete action spaces."""
-    
-    def __init__(self, buffer_size, state_dim, device='cpu'):
-        super().__init__(buffer_size, state_dim, device)
-        
+
+    def __init__(self, n_envs, buffer_size, state_dim, device='cpu'):
+        super().__init__(n_envs, buffer_size, state_dim, device)
+
         # Discrete action specific buffers
-        self.actions = torch.zeros(buffer_size, dtype=torch.long, device=device)
-        self.log_probs = torch.zeros(buffer_size, dtype=torch.float32, device=device)
-    
-    def store(self, state, action, reward, value, log_prob, done):
+        self.actions = torch.zeros((self.n_envs, self.buffer_length), dtype=torch.long, device=device)
+        self.log_probs = torch.zeros((self.n_envs, self.buffer_length), dtype=torch.float32, device=device)
+
+    def store(self, idx_env, state, action, reward, value, log_prob, done):
         """Store a discrete action experience."""
-        if isinstance(state, np.ndarray):
-            state = torch.from_numpy(state).float()
-        
-        self.states[self.ptr] = state.to(self.device)
-        self.actions[self.ptr] = int(action)
-        self.rewards[self.ptr] = float(reward)
-        self.values[self.ptr] = float(value)
-        self.log_probs[self.ptr] = float(log_prob)
-        self.dones[self.ptr] = bool(done)
-        
-        self.ptr = (self.ptr + 1) % self.buffer_size
-        self.size = min(self.size + 1, self.buffer_size)
-    
+        self.states[idx_env, self.ptr] = state
+        self.actions[idx_env, self.ptr] = int(action)
+        self.rewards[idx_env, self.ptr] = float(reward)
+        self.values[idx_env, self.ptr] = float(value)
+        self.log_probs[idx_env, self.ptr] = float(log_prob)
+        self.dones[idx_env, self.ptr] = bool(done)
+
+        self.ptr = (self.ptr + 1) % self.buffer_length if idx_env == self.n_envs - 1 else self.ptr
+        self.size = min(self.size + self.n_envs, self.buffer_length)
+
     def get(self):
         """Get all stored discrete experiences."""
         assert self.size > 0, "Memory buffer is empty"
-        
-        if self.size < self.buffer_size:
+
+        if self.size < self.buffer_length:
             return (
-                self.states[:self.size],
-                self.actions[:self.size],
-                self.rewards[:self.size],
-                self.values[:self.size],
-                self.log_probs[:self.size],
-                self.dones[:self.size]
+                self.states[:, :self.size],
+                self.actions[:, :self.size],
+                self.rewards[:, :self.size],
+                self.values[:, :self.size],
+                self.log_probs[:, :self.size],
+                self.dones[:, :self.size]
             )
         else:
-            indices = torch.arange(self.ptr, self.ptr + self.buffer_size, device=self.device) % self.buffer_size
+            indices = torch.arange(self.ptr, self.ptr + self.buffer_length, device=self.device) % self.buffer_length
             return (
-                self.states[indices],
-                self.actions[indices],
-                self.rewards[indices],
-                self.values[indices],
-                self.log_probs[indices],
-                self.dones[indices]
+                self.states[:, indices],
+                self.actions[:, indices],
+                self.rewards[:, indices],
+                self.values[:, indices],
+                self.log_probs[:, indices],
+                self.dones[:, indices]
             )
 
 
 class ContinuousMemory(BaseMemory):
     """Memory buffer for continuous action spaces."""
     
-    def __init__(self, buffer_size, state_dim, action_dim, device='cpu'):
-        super().__init__(buffer_size, state_dim, device)
-        
+    def __init__(self, n_envs, buffer_size, state_dim, action_dim, device='cpu'):
+        super().__init__(n_envs, buffer_size, state_dim, device)
+
         # Continuous action specific buffers
         self.action_dim = action_dim
-        self.actions = torch.zeros((buffer_size, action_dim), dtype=torch.float32, device=device)
-        self.log_probs = torch.zeros((buffer_size, 1), dtype=torch.float32, device=device)
-    
-    def store(self, state, action, reward, value, log_prob, done):
+        self.actions = torch.zeros((n_envs, self.buffer_size, action_dim), dtype=torch.float32, device=device)
+        self.log_probs = torch.zeros((n_envs, self.buffer_size, 1), dtype=torch.float32, device=device)
+
+    def store(self, idx_env, state, action, reward, value, log_prob, done):
         """Store a continuous action experience."""
-        if isinstance(state, np.ndarray):
-            state = torch.from_numpy(state).float()
-        if isinstance(action, np.ndarray):
-            action = torch.from_numpy(action).float()
-        if isinstance(log_prob, np.ndarray):
-            log_prob = torch.from_numpy(log_prob).float()
-        
-        self.states[self.ptr] = state.to(self.device)
-        self.actions[self.ptr] = action.to(self.device)
-        self.rewards[self.ptr] = float(reward)
-        self.values[self.ptr] = float(value)
-        self.log_probs[self.ptr] = log_prob.to(self.device)
-        self.dones[self.ptr] = bool(done)
-        
-        self.ptr = (self.ptr + 1) % self.buffer_size
-        self.size = min(self.size + 1, self.buffer_size)
-    
+        self.states[idx_env, self.ptr] = state
+        self.actions[idx_env, self.ptr] = action
+        self.rewards[idx_env, self.ptr] = float(reward)
+        self.values[idx_env, self.ptr] = float(value)
+        self.log_probs[idx_env, self.ptr] = log_prob
+        self.dones[idx_env, self.ptr] = bool(done)
+
+        self.ptr = (self.ptr + 1) % self.buffer_length if idx_env == self.n_envs - 1 else self.ptr
+        self.size = min(self.size + self.n_envs, self.buffer_length)
+
     def get(self):
         """Get all stored continuous experiences."""
         assert self.size > 0, "Memory buffer is empty"
-        
-        if self.size < self.buffer_size:
+
+        if self.size < self.buffer_length:
             return (
-                self.states[:self.size],
-                self.actions[:self.size],
-                self.rewards[:self.size],
-                self.values[:self.size],
-                self.log_probs[:self.size],
-                self.dones[:self.size]
+                self.states[:, :self.size],
+                self.actions[:, :self.size],
+                self.rewards[:, :self.size],
+                self.values[:, :self.size],
+                self.log_probs[:, :self.size],
+                self.dones[:, :self.size]
             )
         else:
-            indices = torch.arange(self.ptr, self.ptr + self.buffer_size, device=self.device) % self.buffer_size
+            indices = torch.arange(self.ptr, self.ptr + self.buffer_length, device=self.device) % self.buffer_length
             return (
-                self.states[indices],
-                self.actions[indices],
-                self.rewards[indices],
-                self.values[indices],
-                self.log_probs[indices],
-                self.dones[indices]
+                self.states[:, indices],
+                self.actions[:, indices],
+                self.rewards[:, indices],
+                self.values[:, indices],
+                self.log_probs[:, indices],
+                self.dones[:, indices]
             )
 
 

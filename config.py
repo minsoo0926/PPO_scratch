@@ -3,8 +3,8 @@ import torch
 ENV_CONFIG = {
     # "id": "BipedalWalker-v3",
     # "id": "Humanoid-v5", 
-    # "id": "MountainCarContinuous-v0",
-    "id": "Pendulum-v1",
+    "id": "MountainCarContinuous-v0",
+    # "id": "Pendulum-v1",
     # "id": "LunarLander-v3",
     # "id": "Ant-v5",
     "lr": 3e-4,
@@ -18,6 +18,7 @@ ENV_CONFIG = {
     "batch_size": 64,
     "epochs": 8,
     "hidden_dim": 64,
+    "n_envs": 8,
 }
 
 # torch.autograd.set_detect_anomaly(True)

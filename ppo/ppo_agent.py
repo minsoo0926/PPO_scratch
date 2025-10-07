@@ -27,6 +27,7 @@ class BasePPOAgent(ABC):
         buffer_size=2048,
         batch_size=64,
         epochs=10,
+        n_envs=1,
         device='cpu'
     ):
         """Initialize base PPO agent."""
@@ -41,6 +42,7 @@ class BasePPOAgent(ABC):
         self.batch_size = batch_size
         self.epochs = epochs
         self.device = device
+        self.n_envs = n_envs
         
         # Training statistics
         self.training_stats = {
@@ -58,7 +60,7 @@ class BasePPOAgent(ABC):
         # Initialize network, optimizer and memory (implemented in subclasses)
         self.network = self._create_network(state_dim, action_dim, hidden_dim)
         self.optimizer = optim.Adam(self.network.parameters(), lr=lr)
-        self.memory = self._create_memory(buffer_size, state_dim)
+        self.memory = self._create_memory(n_envs, buffer_size, state_dim)
 
     @abstractmethod
     def _create_network(self, state_dim, action_dim, hidden_dim) -> BaseActorCritic:
@@ -66,40 +68,37 @@ class BasePPOAgent(ABC):
         pass
 
     @abstractmethod
-    def _create_memory(self, buffer_size, state_dim) -> BaseMemory:
+    def _create_memory(self, n_envs, buffer_size, state_dim) -> BaseMemory:
         """Create the appropriate memory buffer."""
         pass
 
     @abstractmethod
-    def get_action(self, state, deterministic=False):
+    def get_action(self, states, deterministic=False):
         """Select action for given state."""
         pass
 
-    def store_experience(self, state, action, reward, value, log_prob, done):
+    def store_experience(self, idx_env, state, action, reward, value, log_prob, done):
         """Store experience in memory buffer."""
-        self.memory.store(state, action, reward, value, log_prob, done)
-    
-    def compute_advantages(self, rewards, values, dones, next_value=0):
+        self.memory.store(idx_env, state, action, reward, value, log_prob, done)
+
+    def compute_advantages(self, rewards, values, dones, next_value):
         """Compute GAE (Generalized Advantage Estimation) advantages."""
         advantages = torch.zeros_like(rewards)
         returns = torch.zeros_like(rewards)
-        
-        gae = 0
-        next_val = next_value
-        
-        for t in reversed(range(len(rewards))):
-            if t == len(rewards) - 1:
-                next_non_terminal = 1.0 - float(dones[t])
-                next_value = next_val
+        batch_len = len(rewards[0])
+
+        gae = torch.zeros(size=(self.n_envs, 1), device=self.device)
+
+        for t in reversed(range(batch_len)):
+            if t == batch_len - 1:
+                next_non_terminal = torch.full_like(rewards[:, t:t+1], 1.0) - dones[:, t:t+1].float()
             else:
-                next_non_terminal = 1.0 - float(dones[t])
-                next_value = values[t + 1]
-            
-            delta = rewards[t] + self.gamma * next_value * next_non_terminal - values[t]
+                next_non_terminal = torch.full_like(rewards[:, t:t+1], 1.0) - dones[:, t:t+1].float()
+                next_value = values[:, t + 1:t + 2]
+            delta = rewards[:, t:t+1] + self.gamma * next_value * next_non_terminal - values[:, t:t+1]
             gae = delta + self.gamma * self.lam * next_non_terminal * gae
-            advantages[t] = gae
-            returns[t] = advantages[t] + values[t]
-        
+            advantages[:, t:t+1] = gae
+            returns[:, t:t+1] = advantages[:, t:t+1] + values[:, t:t+1]
         return advantages, returns
 
     @abstractmethod
@@ -129,7 +128,8 @@ class BasePPOAgent(ABC):
                 'entropy_coef': self.entropy_coef,
                 'max_grad_norm': self.max_grad_norm,
                 'batch_size': self.batch_size,
-                'epochs': self.epochs
+                'epochs': self.epochs,
+                'n_envs': self.n_envs,
             }
         }
         
@@ -138,10 +138,6 @@ class BasePPOAgent(ABC):
             save_dict['model_metadata']['action_high'] = self.action_high
 
         torch.save(save_dict, filepath)
-        # print(f"Model saved to {filepath}")
-        # print(f"  - State dim: {self.state_dim}")
-        # print(f"  - Action dim: {self.action_dim}")
-        # print(f"  - Agent type: {self.__class__.__name__}")
     
     @classmethod
     def load(cls, filepath, strict=True):
@@ -182,7 +178,8 @@ class BasePPOAgent(ABC):
                 entropy_coef=metadata.get('entropy_coef', 0.01),
                 max_grad_norm=metadata.get('max_grad_norm', 0.5),
                 batch_size=metadata.get('batch_size', 64),
-                epochs=metadata.get('epochs', 10)
+                epochs=metadata.get('epochs', 10),
+                n_envs=metadata.get('n_envs', 1)
             )
         elif metadata.get('agent_type') == 'ContinuousPPOAgent':
             agent = ContinuousPPOAgent(
@@ -201,7 +198,8 @@ class BasePPOAgent(ABC):
                 entropy_coef=metadata.get('entropy_coef', 0.01),
                 max_grad_norm=metadata.get('max_grad_norm', 0.5),
                 batch_size=metadata.get('batch_size', 64),
-                epochs=metadata.get('epochs', 10)
+                epochs=metadata.get('epochs', 10),
+                n_envs=metadata.get('n_envs', 1)
             )
         else:
             raise ValueError(f"Unknown agent type: {metadata.get('agent_type')}")
@@ -298,7 +296,7 @@ class BasePPOAgent(ABC):
             filepath (str): Path to the saved model
             strict (bool): Whether to use strict loading for state dict
         """
-        checkpoint = torch.load(filepath, map_location=self.device)
+        checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
         
         try:
             self.network.load_state_dict(checkpoint['network_state_dict'], strict=strict)
@@ -318,19 +316,23 @@ class DiscretePPOAgent(BasePPOAgent):
         """Create discrete action network."""
         return DiscreteActorCritic(state_dim, action_dim, hidden_dim).to(self.device)
 
-    def _create_memory(self, buffer_size, state_dim) -> DiscreteMemory:
+    def _create_memory(self, n_envs, buffer_size, state_dim) -> DiscreteMemory:
         """Create discrete action memory buffer."""
-        return DiscreteMemory(buffer_size, state_dim, self.device)
+        return DiscreteMemory(n_envs, buffer_size, state_dim, self.device)
 
-    def get_action(self, state, deterministic=False):
-        """Select action for given state."""
-        if isinstance(state, np.ndarray):
-            state = torch.from_numpy(state).float().to(self.device)
+    def get_action(self, states, deterministic=False):
+        """Select actions for batch of states (for vectorized environments)."""
+        # Convert to tensor safely
+        if not isinstance(states, torch.Tensor):
+            # Convert any array-like input to tensor directly
+            states = torch.tensor(np.array(states), dtype=torch.float32, device=self.device)
+        else:
+            states = states.to(self.device)
         
         with torch.no_grad():
-            action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0), deterministic=deterministic)
+            actions, log_probs, _, values = self.network.get_action_and_value(states, deterministic=deterministic)
         
-        return action.item(), log_prob.item(), value.item()
+        return actions, log_probs, values
 
     def update(self, next_state=None):
         """Update the policy using PPO algorithm."""
@@ -341,13 +343,10 @@ class DiscretePPOAgent(BasePPOAgent):
         states, actions, rewards, values, old_log_probs, dones = self.memory.get()
         
         # Compute next value for advantage calculation
-        next_value = 0
+        next_value = torch.zeros(size=(self.n_envs, 1), device=self.device)
         if next_state is not None:
-            if isinstance(next_state, np.ndarray):
-                next_state = torch.from_numpy(next_state).float().to(self.device)
             with torch.no_grad():
-                _, next_value = self.network(next_state.unsqueeze(0))
-                next_value = next_value.item()
+                _, next_value = self.network(next_state)
         
         # Compute advantages and returns
         advantages, returns = self.compute_advantages(rewards, values, dones, next_value)
@@ -360,6 +359,14 @@ class DiscretePPOAgent(BasePPOAgent):
         
         # Training loop
         for epoch in range(self.epochs):
+            # Flatten the first dimension
+            states = states.view(-1, self.state_dim)
+            actions = actions.view(-1)
+            old_log_probs = old_log_probs.view(-1)
+            advantages = advantages.view(-1)
+            returns = returns.view(-1)
+            values = values.view(-1)
+
             # Create mini-batches
             indices = torch.randperm(len(states), device=self.device)
             
@@ -380,15 +387,14 @@ class DiscretePPOAgent(BasePPOAgent):
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
                 # Compute policy loss with clipped log probability ratio
-                log_ratio = new_log_probs - batch_old_log_probs
-                log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
+                log_ratio = new_log_probs.squeeze(-1) - batch_old_log_probs
                 ratio = torch.exp(log_ratio)
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # Compute value loss
-                value_loss = nn.MSELoss()(new_values.squeeze(), batch_returns)
+                value_loss = nn.MSELoss()(new_values.squeeze(-1), batch_returns)
                 
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()
@@ -428,20 +434,23 @@ class ContinuousPPOAgent(BasePPOAgent):
             self.action_low, self.action_high
         ).to(self.device)
 
-    def _create_memory(self, buffer_size, state_dim) -> ContinuousMemory:
+    def _create_memory(self, n_envs, buffer_size, state_dim) -> ContinuousMemory:
         """Create continuous action memory buffer."""
-        return ContinuousMemory(buffer_size, state_dim, self.action_dim, self.device)
+        return ContinuousMemory(n_envs, buffer_size, state_dim, self.action_dim, self.device)
 
-    def get_action(self, state, deterministic=False):
-        """Select action for given state."""
-        if isinstance(state, np.ndarray):
-            state = torch.from_numpy(state).float().to(self.device)
+    def get_action(self, states, deterministic=False):
+        """Select actions for batch of states (for vectorized environments)."""
+        # Convert to tensor safely
+        if not isinstance(states, torch.Tensor):
+            # Convert any array-like input to tensor directly
+            states = torch.tensor(np.array(states), dtype=torch.float32, device=self.device)
+        else:
+            states = states.to(self.device)
         
         with torch.no_grad():
-            action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0), deterministic=deterministic)
+            actions, log_probs, _, values = self.network.get_action_and_value(states, deterministic=deterministic)
         
-        # Don't flatten log_prob - keep it as scalar sum for multi-dimensional actions
-        return action.cpu().numpy().flatten(), log_prob.cpu().numpy(), value.item()
+        return actions, log_probs, values
 
     def update(self, next_state=None):
         """Update the policy using PPO algorithm."""
@@ -452,13 +461,10 @@ class ContinuousPPOAgent(BasePPOAgent):
         states, actions, rewards, values, old_log_probs, dones = self.memory.get()
         
         # Compute next value for advantage calculation
-        next_value = 0
+        next_value = torch.zeros(size=(self.n_envs, 1), device=self.device)
         if next_state is not None:
-            if isinstance(next_state, np.ndarray):
-                next_state = torch.from_numpy(next_state).float().to(self.device)
             with torch.no_grad():
-                _, next_value, _ = self.network(next_state.unsqueeze(0))
-                next_value = next_value.item()
+                _, next_value, _ = self.network(next_state)
         
         # Compute advantages and returns
         advantages, returns = self.compute_advantages(rewards, values, dones, next_value)
@@ -471,6 +477,14 @@ class ContinuousPPOAgent(BasePPOAgent):
 
         # Training loop
         for epoch in range(self.epochs):
+            # Flatten the first dimension
+            states = states.view(-1, self.state_dim)
+            actions = actions.view(-1, self.action_dim)
+            old_log_probs = old_log_probs.view(-1)
+            advantages = advantages.view(-1)
+            returns = returns.view(-1)
+            values = values.view(-1)
+
             # Create mini-batches
             indices = torch.randperm(len(states), device=self.device)
             
@@ -490,27 +504,22 @@ class ContinuousPPOAgent(BasePPOAgent):
                 # Forward pass
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
-                # Sum over action dimensions
-                new_log_probs = new_log_probs
-                entropy = entropy.sum(dim=-1)
-                
                 # Compute policy loss with clipped log probability ratio
-                log_ratio = new_log_probs - batch_old_log_probs
-                log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
+                log_ratio = new_log_probs.squeeze(-1) - batch_old_log_probs
                 ratio = torch.exp(log_ratio)
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # Compute value loss
-                value_loss = nn.MSELoss()(new_values.squeeze(), batch_returns)
+                value_loss = nn.MSELoss()(new_values.squeeze(-1), batch_returns)
                 
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()
                 
                 # Total loss
                 total_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy_loss
-                
+
                 # Backward pass
                 self.optimizer.zero_grad()
                 total_loss.backward()
