@@ -7,6 +7,7 @@ import numpy as np
 from abc import ABC, abstractmethod
 from .networks import DiscreteActorCritic, ContinuousActorCritic, BaseActorCritic
 from .memory import DiscreteMemory, ContinuousMemory, BaseMemory
+from config import ENV_CONFIG
 
 
 class BasePPOAgent(ABC):
@@ -168,18 +169,18 @@ class BasePPOAgent(ABC):
                 state_dim=metadata['state_dim'],
                 action_dim=metadata['action_dim'],
                 hidden_dim=metadata['hidden_dim'],
-                lr=metadata['lr'],
-                buffer_size=metadata['buffer_size'],
-                device=metadata.get('device', 'cpu'),
-                gamma=metadata.get('gamma', 0.99),
-                lam=metadata.get('lam', 0.95),
-                clip_ratio=metadata.get('clip_ratio', 0.2),
-                value_coef=metadata.get('value_coef', 0.5),
-                entropy_coef=metadata.get('entropy_coef', 0.01),
-                max_grad_norm=metadata.get('max_grad_norm', 0.5),
-                batch_size=metadata.get('batch_size', 64),
-                epochs=metadata.get('epochs', 10),
-                n_envs=metadata.get('n_envs', 1)
+                lr=ENV_CONFIG.get('lr', 1e-4) if 'lr' in ENV_CONFIG else metadata['lr'],
+                buffer_size=ENV_CONFIG.get('buffer_size', 2048) if 'buffer_size' in ENV_CONFIG else metadata['buffer_size'],
+                device=ENV_CONFIG.get('device', 'cpu') if 'device' in ENV_CONFIG else metadata.get('device', 'cpu'),
+                gamma=ENV_CONFIG.get('gamma', 0.99) if 'gamma' in ENV_CONFIG else metadata.get('gamma', 0.99),
+                lam=ENV_CONFIG.get('lam', 0.95) if 'lam' in ENV_CONFIG else metadata.get('lam', 0.95),
+                clip_ratio=ENV_CONFIG.get('clip_ratio', 0.2) if 'clip_ratio' in ENV_CONFIG else metadata.get('clip_ratio', 0.2),
+                value_coef=ENV_CONFIG.get('value_coef', 0.5) if 'value_coef' in ENV_CONFIG else metadata.get('value_coef', 0.5),
+                entropy_coef=ENV_CONFIG.get('entropy_coef', 0.01) if 'entropy_coef' in ENV_CONFIG else metadata.get('entropy_coef', 0.01),
+                max_grad_norm=ENV_CONFIG.get('max_grad_norm', 0.5) if 'max_grad_norm' in ENV_CONFIG else metadata.get('max_grad_norm', 0.5),
+                batch_size=ENV_CONFIG.get('batch_size', 64) if 'batch_size' in ENV_CONFIG else metadata.get('batch_size', 64),
+                epochs=ENV_CONFIG.get('epochs', 10) if 'epochs' in ENV_CONFIG else metadata.get('epochs', 10),
+                n_envs=ENV_CONFIG.get('n_envs', 16) if 'n_envs' in ENV_CONFIG else metadata.get('n_envs', 1)
             )
         elif metadata.get('agent_type') == 'ContinuousPPOAgent':
             agent = ContinuousPPOAgent(
@@ -188,18 +189,18 @@ class BasePPOAgent(ABC):
                 action_low=metadata['action_low'],
                 action_high=metadata['action_high'],
                 hidden_dim=metadata['hidden_dim'],
-                lr=metadata['lr'],
-                buffer_size=metadata['buffer_size'],
-                device=metadata.get('device', 'cpu'),
-                gamma=metadata.get('gamma', 0.99),
-                lam=metadata.get('lam', 0.95),
-                clip_ratio=metadata.get('clip_ratio', 0.2),
-                value_coef=metadata.get('value_coef', 0.5),
-                entropy_coef=metadata.get('entropy_coef', 0.01),
-                max_grad_norm=metadata.get('max_grad_norm', 0.5),
-                batch_size=metadata.get('batch_size', 64),
-                epochs=metadata.get('epochs', 10),
-                n_envs=metadata.get('n_envs', 1)
+                lr=ENV_CONFIG.get('lr', 1e-4) if 'lr' in ENV_CONFIG else metadata['lr'],
+                buffer_size=ENV_CONFIG.get('buffer_size', 2048) if 'buffer_size' in ENV_CONFIG else metadata['buffer_size'],
+                device=ENV_CONFIG.get('device', 'cpu') if 'device' in ENV_CONFIG else metadata.get('device', 'cpu'),
+                gamma=ENV_CONFIG.get('gamma', 0.99) if 'gamma' in ENV_CONFIG else metadata.get('gamma', 0.99),
+                lam=ENV_CONFIG.get('lam', 0.95) if 'lam' in ENV_CONFIG else metadata.get('lam', 0.95),
+                clip_ratio=ENV_CONFIG.get('clip_ratio', 0.2) if 'clip_ratio' in ENV_CONFIG else metadata.get('clip_ratio', 0.2),
+                value_coef=ENV_CONFIG.get('value_coef', 0.5) if 'value_coef' in ENV_CONFIG else metadata.get('value_coef', 0.5),
+                entropy_coef=ENV_CONFIG.get('entropy_coef', 0.01) if 'entropy_coef' in ENV_CONFIG else metadata.get('entropy_coef', 0.01),
+                max_grad_norm=ENV_CONFIG.get('max_grad_norm', 0.5) if 'max_grad_norm' in ENV_CONFIG else metadata.get('max_grad_norm', 0.5),
+                batch_size=ENV_CONFIG.get('batch_size', 64) if 'batch_size' in ENV_CONFIG else metadata.get('batch_size', 64),
+                epochs=ENV_CONFIG.get('epochs', 10) if 'epochs' in ENV_CONFIG else metadata.get('epochs', 10),
+                n_envs=ENV_CONFIG.get('n_envs', 16) if 'n_envs' in ENV_CONFIG else metadata.get('n_envs', 1)
             )
         else:
             raise ValueError(f"Unknown agent type: {metadata.get('agent_type')}")

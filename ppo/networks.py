@@ -150,6 +150,7 @@ class ContinuousActorCritic(BaseActorCritic):
 
     def forward(self, state):
         """Forward pass through both actor and critic."""
+        state = state.to(torch.float32)
         if self.obs_norm:
             state = self.obs_rms.normalize(state)
         shared_features = self.shared_layers(state)
