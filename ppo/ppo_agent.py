@@ -298,7 +298,7 @@ class BasePPOAgent(ABC):
             filepath (str): Path to the saved model
             strict (bool): Whether to use strict loading for state dict
         """
-        checkpoint = torch.load(filepath, map_location=self.device)
+        checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
         
         try:
             self.network.load_state_dict(checkpoint['network_state_dict'], strict=strict)
@@ -324,8 +324,12 @@ class DiscretePPOAgent(BasePPOAgent):
 
     def get_action(self, state, deterministic=False):
         """Select action for given state."""
-        if isinstance(state, np.ndarray):
-            state = torch.from_numpy(state).float().to(self.device)
+        # Convert to tensor safely
+        if not isinstance(state, torch.Tensor):
+            # Convert any array-like input to tensor directly
+            state = torch.tensor(np.array(state), dtype=torch.float32, device=self.device)
+        else:
+            state = state.to(self.device)
         
         with torch.no_grad():
             action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0), deterministic=deterministic)
@@ -334,8 +338,12 @@ class DiscretePPOAgent(BasePPOAgent):
     
     def get_actions_batch(self, states, deterministic=False):
         """Select actions for batch of states (for vectorized environments)."""
-        if isinstance(states, np.ndarray):
-            states = torch.from_numpy(states).float().to(self.device)
+        # Convert to tensor safely
+        if not isinstance(states, torch.Tensor):
+            # Convert any array-like input to tensor directly
+            states = torch.tensor(np.array(states), dtype=torch.float32, device=self.device)
+        else:
+            states = states.to(self.device)
         
         with torch.no_grad():
             actions, log_probs, _, values = self.network.get_action_and_value(states, deterministic=deterministic)
@@ -444,9 +452,13 @@ class ContinuousPPOAgent(BasePPOAgent):
 
     def get_action(self, state, deterministic=False):
         """Select action for given state."""
-        if isinstance(state, np.ndarray):
-            state = torch.from_numpy(state).float().to(self.device)
-        
+        # Convert to tensor safely
+        if not isinstance(state, torch.Tensor):
+            # Convert any array-like input to tensor directly
+            state = torch.tensor(np.array(state), dtype=torch.float32, device=self.device)
+        else:
+            state = state.to(self.device)
+        breakpoint()
         with torch.no_grad():
             action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0), deterministic=deterministic)
         
@@ -455,8 +467,12 @@ class ContinuousPPOAgent(BasePPOAgent):
     
     def get_actions_batch(self, states, deterministic=False):
         """Select actions for batch of states (for vectorized environments)."""
-        if isinstance(states, np.ndarray):
-            states = torch.from_numpy(states).float().to(self.device)
+        # Convert to tensor safely
+        if not isinstance(states, torch.Tensor):
+            # Convert any array-like input to tensor directly
+            states = torch.tensor(np.array(states), dtype=torch.float32, device=self.device)
+        else:
+            states = states.to(self.device)
         
         with torch.no_grad():
             actions, log_probs, _, values = self.network.get_action_and_value(states, deterministic=deterministic)

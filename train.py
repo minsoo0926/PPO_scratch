@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import gymnasium as gym
 from gymnasium import vector
+from gymnasium.wrappers.numpy_to_torch import NumpyToTorch
 import matplotlib.pyplot as plt
 from ppo import create_ppo_agent, print_action_space_info
 from config import ENV_CONFIG
@@ -13,10 +14,10 @@ from config import ENV_CONFIG
 def create_env_model_dir(env_id):
     """
     Create directory for environment-specific models.
-    
+
     Args:
         env_id (str): Environment ID
-        
+
     Returns:
         str: Path to the environment directory
     """
@@ -28,11 +29,11 @@ def create_env_model_dir(env_id):
 def get_model_path(env_id, filename):
     """
     Get full path for model file in environment directory.
-    
+
     Args:
         env_id (str): Environment ID
         filename (str): Model filename
-        
+
     Returns:
         str: Full path to the model file
     """
@@ -43,17 +44,17 @@ def get_model_path(env_id, filename):
 def list_saved_models(env_id):
     """
     List all saved models for a given environment.
-    
+
     Args:
         env_id (str): Environment ID
-        
+
     Returns:
         list: List of available model files
     """
     env_dir = os.path.join("models", env_id.replace("-", "_"))
     if not os.path.exists(env_dir):
         return []
-    
+
     model_files = [f for f in os.listdir(env_dir) if f.endswith('.pth')]
     return sorted(model_files)
 
@@ -61,22 +62,22 @@ def list_saved_models(env_id):
 def find_latest_model(env_id):
     """
     Find the latest saved model for a given environment.
-    
+
     Args:
         env_id (str): Environment ID
-        
+
     Returns:
         str or None: Path to the latest model file, or None if no models found
     """
     model_files = list_saved_models(env_id)
     if not model_files:
         return None
-    
+
     # Try to find final model first
     final_model = "ppo_model_final.pth"
     if final_model in model_files:
         return get_model_path(env_id, final_model)
-    
+
     # Otherwise, find the model with highest timestep
     timestep_models = []
     for model_file in model_files:
@@ -88,12 +89,12 @@ def find_latest_model(env_id):
                     timestep_models.append((int(timestep_str), model_file))
             except:
                 continue
-    
+
     if timestep_models:
         # Return model with highest timestep
         latest_model = max(timestep_models, key=lambda x: x[0])[1]
         return get_model_path(env_id, latest_model)
-    
+
     # Fallback to any available model
     return get_model_path(env_id, model_files[0])
 
@@ -101,7 +102,7 @@ def find_latest_model(env_id):
 def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, resume_from=None):
     """
     Train PPO agent on given environment.
-    
+
     Args:
         env_config (dict): Environment configuration
         total_timesteps (int): Total number of training timesteps
@@ -110,25 +111,18 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
     """
     # Create environment - support both single and vectorized environments
     n_envs = env_config.get('n_envs', 1)
-    
-    if n_envs > 1:
-        print(f"Creating vectorized environment with {n_envs} parallel environments")
-        # Create multiple environments for vectorization
-        env_fns = [lambda: gym.make(env_config['id'], render_mode=None) for _ in range(n_envs)]
-        env = vector.SyncVectorEnv(env_fns)
-        is_vectorized = True
-    else:
-        print(f"Creating single environment")
-        env = gym.make(env_config['id'], render_mode=None)
-        is_vectorized = False
-    
+
+    print(f"Creating vectorized environment with {n_envs} parallel environments")
+    # Create multiple environments for vectorization
+    env = gym.make_vec(env_config['id'], render_mode=None, num_envs=n_envs, wrappers=[NumpyToTorch])
+
     # Print action space information
     print_action_space_info(env)
-    
+
     # Set device
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device_str}")
-    
+
     # Initialize PPO agent using factory function
     agent = create_ppo_agent(
         env,
@@ -145,7 +139,7 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
         epochs=env_config.get('epochs', 10),
         device=device_str
     )
-    
+
     # Resume from existing model if specified
     start_timestep = 0
     if resume_from:
@@ -158,10 +152,10 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
                 print(f"Resume model not found: {resume_from}")
                 print(f"Available models: {list_saved_models(env_config['id'])}")
                 return None, [], []
-        
+
         print(f"Resuming training from: {resume_from}")
         agent.load(resume_from)
-        
+
         # Extract timestep from filename if possible
         try:
             filename = os.path.basename(resume_from)
@@ -172,159 +166,121 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
                     print(f"Resuming from timestep: {start_timestep}")
         except:
             pass
-    
+
     # Training variables
     timestep = start_timestep
     episode = 0
+    prior_logging = 0
+    prior_save = 0
     episode_rewards = []
     episode_lengths = []
-    
+
     print(f"Starting training on {env_config['id']}")
     print("-" * 50)
-    
-    if is_vectorized:
-        # Vectorized environment training with batch processing
-        while timestep < total_timesteps:
-            states, _ = env.reset()  # Shape: (n_envs, obs_dim)
-            states = torch.from_numpy(states).float().to(device_str)
-            episode_rewards_batch = np.zeros(n_envs)
-            episode_lengths_batch = np.zeros(n_envs)
-            dones = np.array([False] * n_envs)
-            
-            while not np.all(dones) and timestep < total_timesteps:
-                # Get actions for all environments at once (batch processing)
-                actions, log_probs, values = agent.get_actions_batch(states)
-                
-                # Convert to numpy for env.step()
-                if isinstance(actions, torch.Tensor):
-                    actions_np = actions.cpu().numpy()
-                else:
-                    actions_np = actions
-                
-                # Take step in all environments
-                next_states, rewards, terminateds, truncateds, _ = env.step(actions_np)
-                
-                # Convert to numpy arrays and tensors
-                rewards = np.array(rewards)
-                terminateds = np.array(terminateds)
-                truncateds = np.array(truncateds)
-                new_dones = terminateds | truncateds
-                next_states = torch.from_numpy(next_states).float().to(device_str)
-                
-                # Store experiences for all environments
+
+    # Vectorized environment training with batch processing
+    while timestep < total_timesteps:
+        states, _ = env.reset()  # Shape: (n_envs, obs_dim)
+        episode_rewards_batch = np.zeros(n_envs)
+        episode_lengths_batch = np.zeros(n_envs)
+        dones = np.array([False] * n_envs)
+
+        while not np.all(dones) and timestep < total_timesteps:
+            # Get actions for all environments at once (batch processing)
+            actions, log_probs, values = agent.get_actions_batch(states)
+
+            # Take step in all environments
+            next_states, rewards, terminateds, truncateds, _ = env.step(actions)
+
+            # Convert to numpy arrays and tensors
+            rewards = np.array(rewards)
+            values = [float(v) for v in values]
+            terminateds = np.array(terminateds)
+            truncateds = np.array(truncateds)
+            new_dones = terminateds | truncateds
+
+            # Store experiences for all environments
+            for i in range(n_envs):
+                if not dones[i]:
+                    # Convert tensor values to appropriate types for storage
+                    state = states[i]
+                    action_val = actions[i]
+                    reward_val = float(rewards[i])
+                    value_val = values[i]
+                    # Keep log_prob as tensor for memory compatibility
+                    log_prob_val = log_probs[i].cpu() if isinstance(log_probs, torch.Tensor) else torch.tensor([float(log_probs[i])])
+                    done_val = bool(new_dones[i])
+
+                    agent.store_experience(
+                        state, action_val, reward_val,
+                        value_val, log_prob_val, done_val
+                    )
+                    episode_rewards_batch[i] += float(rewards[i])
+                    episode_lengths_batch[i] += 1
+
+            # Update counters
+            timestep += np.sum(~dones)  # Count active environments
+
+            # Update done status and collect episode stats
+            newly_done = new_dones & ~dones
+            if np.any(newly_done):
+                for i in range(n_envs):
+                    if newly_done[i]:
+                        episode_rewards.append(episode_rewards_batch[i])
+                        episode_lengths.append(episode_lengths_batch[i])
+                        episode += 1
+                        episode_rewards_batch[i] = 0.0
+                        episode_lengths_batch[i] = 0.0
+
+            dones = new_dones
+            states = next_states
+
+            # Update agent when buffer is full
+            if agent.memory.is_full():
+                # For vectorized environments, use first non-done state as next_state
+                next_state = None
                 for i in range(n_envs):
                     if not dones[i]:
-                        # Convert tensor values to appropriate types for storage
-                        state_np = states[i].cpu().numpy()
-                        action_val = actions_np[i]
-                        reward_val = float(rewards[i])
-                        value_val = values[i].item() if isinstance(values, torch.Tensor) else float(values[i])
-                        # Keep log_prob as tensor for memory compatibility
-                        log_prob_val = log_probs[i].cpu() if isinstance(log_probs, torch.Tensor) else torch.tensor([float(log_probs[i])])
-                        done_val = bool(new_dones[i])
-                        
-                        agent.store_experience(
-                            state_np, action_val, reward_val, 
-                            value_val, log_prob_val, done_val
-                        )
-                        episode_rewards_batch[i] += float(rewards[i])
-                        episode_lengths_batch[i] += 1
-                
-                # Update counters
-                timestep += np.sum(~dones)  # Count active environments
-                
-                # Update done status and collect episode stats
-                newly_done = new_dones & ~dones
-                if np.any(newly_done):
-                    for i in range(n_envs):
-                        if newly_done[i]:
-                            episode_rewards.append(episode_rewards_batch[i])
-                            episode_lengths.append(episode_lengths_batch[i])
-                            episode += 1
-                            episode_rewards_batch[i] = 0.0
-                            episode_lengths_batch[i] = 0.0
-                
-                dones = new_dones
-                states = next_states
-                
-                # Update agent when buffer is full
-                if agent.memory.is_full():
-                    # For vectorized environments, use first non-done state as next_state
-                    next_state = None
-                    for i in range(n_envs):
-                        if not dones[i]:
-                            next_state = states[i].cpu().numpy()
-                            break
-                    agent.update(next_state)
-    else:
-        # Single environment training (original logic)
-        while timestep < total_timesteps:
-            state, _ = env.reset()
-            episode_reward = 0.0
-            episode_length = 0
-            done = False
-            
-            while not done and timestep < total_timesteps:
-                # Get action from agent
-                action, log_prob, value = agent.get_action(state)
-                
-                # Take step in environment
-                next_state, reward, terminated, truncated, _ = env.step(action)
-                done = terminated or truncated
-                
-                # Store experience
-                agent.store_experience(state, action, reward, value, log_prob, done)
-                
-                # Update counters
-                timestep += 1
-                episode_reward += float(reward)
-                episode_length += 1
-                
-                state = next_state
-                
-                # Update agent when buffer is full
-                if agent.memory.is_full():
-                    agent.update(next_state if not done else None)
-            
-            # Store episode statistics (single environment)
-            episode_rewards.append(episode_reward)
-            episode_lengths.append(episode_length)
-            episode += 1
-        
+                        next_state = states[i]
+                        break
+                agent.update(next_state)
+
         # Print progress
-        if episode % 100 == 0:
+        if episode // 100 != prior_logging // 100:
             avg_reward = np.mean(episode_rewards[-100:])
             avg_length = np.mean(episode_lengths[-100:])
             print(f"Episode {episode}, Timestep {timestep}")
             print(f"Average Reward (last 100): {avg_reward:.2f}")
             print(f"Average Length (last 100): {avg_length:.2f}")
             print("-" * 30)
-        
+            prior_logging = episode
+
         # Save model periodically
-        if timestep % save_freq == 0:
+        if timestep // save_freq != prior_save // save_freq:
             model_path = get_model_path(env_config['id'], f"ppo_model_{timestep}.pth")
             agent.save(model_path)
             print(f"Model saved at timestep {timestep}: {model_path}")
-    
+            prior_save = timestep
+
     # Final update if there are remaining experiences
     if len(agent.memory) > 0:
         agent.update()
-    
+
     # Save final model
     final_model_path = get_model_path(env_config['id'], "ppo_model_final.pth")
     agent.save(final_model_path)
     print(f"Final model saved: {final_model_path}")
-    
+
     # Close environment
     env.close()
-    
+
     return agent, episode_rewards, episode_lengths
 
 
 def plot_training_results(episode_rewards, episode_lengths, window=100):
     """Plot training results."""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-    
+
     # Plot episode rewards
     ax1.plot(episode_rewards, alpha=0.3, color='blue')
     if len(episode_rewards) >= window:
@@ -334,7 +290,7 @@ def plot_training_results(episode_rewards, episode_lengths, window=100):
     ax1.set_ylabel('Episode Reward')
     ax1.set_title('Training Progress - Rewards')
     ax1.grid(True)
-    
+
     # Plot episode lengths
     ax2.plot(episode_lengths, alpha=0.3, color='green')
     if len(episode_lengths) >= window:
@@ -344,7 +300,7 @@ def plot_training_results(episode_rewards, episode_lengths, window=100):
     ax2.set_ylabel('Episode Length')
     ax2.set_title('Training Progress - Episode Length')
     ax2.grid(True)
-    
+
     plt.tight_layout()
     plt.savefig('training_results.png', dpi=150, bbox_inches='tight')
     plt.show()
@@ -353,11 +309,16 @@ def plot_training_results(episode_rewards, episode_lengths, window=100):
 def test_agent(env_config=ENV_CONFIG, model_path=None, num_episodes=10):
     """Test trained agent."""
     # Create single environment for testing (no vectorization for testing)
-    env: gym.Env = gym.make(env_config['id'], render_mode='human')
+    # Always use single environment for testing regardless of training setup
+    test_env_config = env_config.copy()
+    test_env_config['n_envs'] = 1  # Force single environment for testing
+
+    env: gym.Env = gym.make(test_env_config['id'], render_mode="human")
+    env = NumpyToTorch(env)  # Convert observations to PyTorch tensors
 
     # Set device
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
-    
+
     # Determine model path
     if model_path is None:
         # Try to find latest model for this environment
@@ -382,24 +343,38 @@ def test_agent(env_config=ENV_CONFIG, model_path=None, num_episodes=10):
                 env.close()
                 return
 
-    # Import the agent classes to use the class method
-    from ppo.ppo_agent import BasePPOAgent
-    
-    # Load trained model using class method (returns new instance)
-    agent = BasePPOAgent.load(model_path)
-    
+    # Create agent using same method as training, then load weights
+    agent = create_ppo_agent(
+        env,
+        lr=test_env_config.get('lr', 3e-4),
+        gamma=test_env_config.get('gamma', 0.99),
+        lam=test_env_config.get('lam', 0.95),
+        clip_ratio=test_env_config.get('clip_ratio', 0.2),
+        value_coef=test_env_config.get('value_coef', 0.5),
+        entropy_coef=test_env_config.get('entropy_coef', 0.01),
+        max_grad_norm=test_env_config.get('max_grad_norm', 0.5),
+        hidden_dim=test_env_config.get('hidden_dim', 64),
+        buffer_size=test_env_config.get('buffer_size', 2048),
+        batch_size=test_env_config.get('batch_size', 64),
+        epochs=test_env_config.get('epochs', 10),
+        device=device_str
+    )
+
+    # Load trained weights
+    agent.load_network_only(model_path)
+
     # Set model to evaluation mode
     agent.network.eval()
 
     print(f"Testing agent on {env_config['id']} for {num_episodes} episodes")
 
     total_rewards = []
-    
+
     for episode in range(num_episodes):
         state, _ = env.reset()
         episode_reward = 0.0
         done = False
-        
+
         while not done:
             # Get deterministic action (no gradient computation needed)
             with torch.no_grad():
@@ -407,10 +382,10 @@ def test_agent(env_config=ENV_CONFIG, model_path=None, num_episodes=10):
             state, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
             episode_reward += float(reward)
-        
+
         total_rewards.append(episode_reward)
         print(f"Episode {episode + 1}: Reward = {episode_reward}")
-    
+
     print(f"\nAverage test reward: {np.mean(total_rewards):.2f} ± {np.std(total_rewards):.2f}")
     env.close()
 
@@ -419,22 +394,22 @@ def show_available_models(env_config=ENV_CONFIG):
     """Show all available models for the given environment."""
     env_id = env_config['id']
     models = list_saved_models(env_id)
-    
+
     if not models:
         print(f"No saved models found for environment '{env_id}'")
         return
-    
+
     print(f"Available models for environment '{env_id}':")
     print("-" * 50)
-    
+
     env_dir = os.path.join("models", env_id.replace("-", "_"))
     for model in models:
         model_path = os.path.join(env_dir, model)
         file_size = os.path.getsize(model_path)
         file_size_mb = file_size / (1024 * 1024)
-        
+
         print(f"  {model:<25} ({file_size_mb:.2f} MB)")
-    
+
     latest_model = find_latest_model(env_id)
     if latest_model:
         print(f"\nLatest model: {os.path.basename(latest_model)}")
@@ -443,22 +418,22 @@ def show_available_models(env_config=ENV_CONFIG):
 def clean_old_models(env_config=ENV_CONFIG, keep_count=5):
     """
     Clean old model files, keeping only the most recent ones.
-    
+
     Args:
         env_config (dict): Environment configuration
         keep_count (int): Number of models to keep
     """
     env_id = env_config['id']
     models = list_saved_models(env_id)
-    
+
     if len(models) <= keep_count:
         print(f"Only {len(models)} models found, no cleanup needed")
         return
-    
+
     # Separate final model and timestep models
     final_models = [m for m in models if "final" in m]
     timestep_models = []
-    
+
     for model in models:
         if "ppo_model_" in model and model.endswith(".pth") and "final" not in model:
             try:
@@ -467,16 +442,16 @@ def clean_old_models(env_config=ENV_CONFIG, keep_count=5):
                     timestep_models.append((int(timestep_str), model))
             except:
                 continue
-    
+
     # Sort by timestep and keep most recent
     timestep_models.sort(key=lambda x: x[0], reverse=True)
     models_to_keep = [m[1] for m in timestep_models[:keep_count-len(final_models)]]
     models_to_keep.extend(final_models)
-    
+
     # Delete old models
     env_dir = os.path.join("models", env_id.replace("-", "_"))
     deleted_count = 0
-    
+
     for model in models:
         if model not in models_to_keep:
             model_path = os.path.join(env_dir, model)
@@ -486,18 +461,18 @@ def clean_old_models(env_config=ENV_CONFIG, keep_count=5):
                 deleted_count += 1
             except Exception as e:
                 print(f"Error deleting {model}: {e}")
-    
+
     print(f"Cleaned up {deleted_count} old models, kept {len(models_to_keep)} models")
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Train or test PPO agent with environment-specific model management.")
-    parser.add_argument('--mode', choices=['train', 'test', 'list', 'clean'], default='train', 
+    parser.add_argument('--mode', choices=['train', 'test', 'list', 'clean'], default='train',
                        help='Mode: train, test, list models, or clean old models')
-    parser.add_argument('--model_path', type=str, default=None, 
+    parser.add_argument('--model_path', type=str, default=None,
                        help='Path to the trained model for testing (auto-detects latest if not specified)')
-    parser.add_argument('--resume_from', type=str, default=None, 
+    parser.add_argument('--resume_from', type=str, default=None,
                        help='Model filename to resume training from')
     parser.add_argument('--test_episodes', type=int, default=10, help='Number of episodes to test the agent')
     parser.add_argument('--timesteps', type=int, default=100000, help='Total training timesteps')
@@ -513,7 +488,7 @@ if __name__ == "__main__":
             save_freq=args.save_freq,
             resume_from=args.resume_from
         )
-        
+
         if result is not None:
             agent, rewards, lengths = result
             # Plot results
@@ -524,11 +499,11 @@ if __name__ == "__main__":
     elif args.mode == 'test':
         # Test the trained agent
         test_agent(env_config=ENV_CONFIG, model_path=args.model_path, num_episodes=args.test_episodes)
-    
+
     elif args.mode == 'list':
         # List available models
         show_available_models(ENV_CONFIG)
-    
+
     elif args.mode == 'clean':
         # Clean old models
         clean_old_models(ENV_CONFIG, keep_count=args.keep_models)
