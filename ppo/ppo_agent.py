@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from abc import ABC, abstractmethod
-from .networks import DiscreteActorCritic, ContinuousActorCritic
+from .networks import DiscreteActorCritic, ContinuousActorCritic, BaseActorCritic
 from .memory import DiscreteMemory, ContinuousMemory
 
 
@@ -61,7 +61,7 @@ class BasePPOAgent(ABC):
         self.memory = self._create_memory(buffer_size, state_dim)
 
     @abstractmethod
-    def _create_network(self, state_dim, action_dim, hidden_dim):
+    def _create_network(self, state_dim, action_dim, hidden_dim) -> BaseActorCritic:
         """Create the appropriate network architecture."""
         pass
 
@@ -314,7 +314,7 @@ class BasePPOAgent(ABC):
 class DiscretePPOAgent(BasePPOAgent):
     """PPO Agent for discrete action spaces."""
 
-    def _create_network(self, state_dim, action_dim, hidden_dim):
+    def _create_network(self, state_dim, action_dim, hidden_dim) -> DiscreteActorCritic:
         """Create discrete action network."""
         return DiscreteActorCritic(state_dim, action_dim, hidden_dim).to(self.device)
 
@@ -328,12 +328,7 @@ class DiscretePPOAgent(BasePPOAgent):
             state = torch.from_numpy(state).float().to(self.device)
         
         with torch.no_grad():
-            if deterministic:
-                action_logits, value = self.network(state.unsqueeze(0))
-                action = torch.argmax(action_logits, dim=-1)
-                log_prob = torch.zeros(1, device=self.device)
-            else:
-                action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0))
+            action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0), deterministic=deterministic)
         
         return action.item(), log_prob.item(), value.item()
 
@@ -426,7 +421,7 @@ class ContinuousPPOAgent(BasePPOAgent):
         self.action_high = action_high
         super().__init__(state_dim, action_dim, **kwargs)
 
-    def _create_network(self, state_dim, action_dim, hidden_dim):
+    def _create_network(self, state_dim, action_dim, hidden_dim) -> ContinuousActorCritic:
         """Create continuous action network."""
         return ContinuousActorCritic(
             state_dim, action_dim, hidden_dim, 
@@ -443,18 +438,7 @@ class ContinuousPPOAgent(BasePPOAgent):
             state = torch.from_numpy(state).float().to(self.device)
         
         with torch.no_grad():
-            if deterministic:
-                action_mean, value, _ = self.network(state.unsqueeze(0))
-                # For deterministic actions, use the mean and compute action bounds  
-                device = action_mean.device
-                action_low = torch.tensor(self.action_low, device=device, dtype=torch.float32)
-                action_high = torch.tensor(self.action_high, device=device, dtype=torch.float32)
-                action_scale = (action_high - action_low) / 2.0
-                action_bias = (action_high + action_low) / 2.0
-                action = torch.tanh(action_mean) * action_scale + action_bias
-                log_prob = torch.zeros(1, device=self.device)
-            else:
-                action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0))
+            action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0), deterministic=deterministic)
         
         return action.cpu().numpy().flatten(), log_prob.cpu().numpy().flatten(), value.item()
 
@@ -482,7 +466,6 @@ class ContinuousPPOAgent(BasePPOAgent):
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
         # Convert to tensors and sum log probs over action dimensions
-        # old_log_probs = old_log_probs.sum(dim=-1, keepdim=False).detach()
         old_log_probs = old_log_probs.detach()
 
         # Training loop
@@ -520,8 +503,7 @@ class ContinuousPPOAgent(BasePPOAgent):
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # Compute value loss
-                # value_loss = nn.MSELoss()(new_values.squeeze(), batch_returns)
-                value_loss = 0.5 * (batch_returns - new_values.squeeze(-1)).pow(2).mean()
+                value_loss = nn.MSELoss()(new_values.squeeze(), batch_returns)
                 
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()

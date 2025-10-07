@@ -44,7 +44,7 @@ class BaseActorCritic(nn.Module, ABC):
         return self.critic(shared_features)
 
     @abstractmethod
-    def get_action_and_value(self, state, action=None):
+    def get_action_and_value(self, state, action=None, deterministic=False):
         """Get action, log probability, entropy, and value."""
         pass
 
@@ -74,10 +74,16 @@ class DiscreteActorCritic(BaseActorCritic):
         state_value = self.critic(shared_features)
         return action_logits, state_value
 
-    def get_action_and_value(self, state, action=None):
+    def get_action_and_value(self, state, action=None, deterministic=False):
         """Get action, log probability, entropy, and value for discrete actions."""
         action_logits, value = self.forward(state)
         probs = Categorical(logits=action_logits)
+
+        if deterministic:
+            action = probs.mean
+            log_prob = torch.zeros(1, device=state.device)
+            entropy = torch.zeros(1, device=state.device)
+            return action, log_prob, entropy, value
         
         if action is None:
             action = probs.sample()
@@ -104,11 +110,19 @@ class ContinuousActorCritic(BaseActorCritic):
     def __init__(self, state_dim, action_dim, hidden_dim=64, action_low=np.array([-1.0]), action_high=np.array([1.0])):
         super().__init__(state_dim, action_dim, hidden_dim)
         
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
         # Store action bounds - will be converted to tensors on first forward pass
         self.action_low_val = action_low
         self.action_high_val = action_high
-        self.action_scale = None
-        self.action_bias = None
+        self.action_scale = self.action_scale = torch.tensor(
+            (self.action_high_val - self.action_low_val) / 2.0, 
+            device=self.device, dtype=torch.float32
+        )
+        self.action_bias = torch.tensor(
+            (self.action_high_val + self.action_low_val) / 2.0, 
+            device=self.device, dtype=torch.float32
+        )
         
         # Actor head - outputs raw mean (pre-tanh)
         self.actor_mean = nn.Sequential(
@@ -119,33 +133,25 @@ class ContinuousActorCritic(BaseActorCritic):
         # Learnable log standard deviation parameter
         self.log_std = nn.Parameter(torch.zeros(action_dim))
 
-    def _initialize_action_space(self, device):
-        """Initialize action space tensors on the correct device."""
-        if self.action_scale is None or self.action_scale.device != device:
-            self.action_scale = torch.tensor(
-                (self.action_high_val - self.action_low_val) / 2.0, 
-                device=device, dtype=torch.float32
-            )
-            self.action_bias = torch.tensor(
-                (self.action_high_val + self.action_low_val) / 2.0, 
-                device=device, dtype=torch.float32
-            )
-
     def forward(self, state):
         """Forward pass through both actor and critic."""
-        self._initialize_action_space(state.device)
-        
         shared_features = self.shared_layers(state)
         raw_action_mean = self.actor_mean(shared_features)
         state_value = self.critic(shared_features)
         log_std = torch.clamp(self.log_std, LOG_STD_MIN, LOG_STD_MAX)
         return raw_action_mean, state_value, log_std
 
-    def get_action_and_value(self, state, action=None):
+    def get_action_and_value(self, state, action=None, deterministic=False):
         """Get action, log probability, entropy, and value for continuous actions."""
         raw_action_mean, value, log_std = self.forward(state)
         std = torch.exp(log_std)
         
+        if deterministic:
+            action = torch.tanh(raw_action_mean) * self.action_scale + self.action_bias
+            log_prob = torch.zeros(1, device=self.device)
+            entropy = torch.zeros(1, device=self.device)
+            return action, log_prob, entropy, value
+
         # Create normal distribution in raw space
         dist = Normal(raw_action_mean, std)
         
