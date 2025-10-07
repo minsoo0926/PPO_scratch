@@ -80,10 +80,10 @@ class DiscreteActorCritic(BaseActorCritic):
         probs = Categorical(logits=action_logits)
 
         if deterministic:
-            action = probs.mean
-            log_prob = torch.zeros(1, device=state.device)
-            entropy = torch.zeros(1, device=state.device)
-            return action, log_prob, entropy, value
+            action = torch.argmax(probs.probs, dim=-1)
+            batch_size = state.shape[0] if state.dim() > 1 else 1
+            zero = torch.zeros((batch_size,), device=state.device)
+            return action, zero, zero, value
         
         if action is None:
             action = probs.sample()
@@ -111,17 +111,23 @@ class ContinuousActorCritic(BaseActorCritic):
         super().__init__(state_dim, action_dim, hidden_dim)
         
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        if np.isscalar(action_low) or (isinstance(action_low, np.ndarray) and action_low.size == 1):
+            action_low = np.full(action_dim, float(np.array(action_low).item()), dtype=np.float32)
+        if np.isscalar(action_high) or (isinstance(action_high, np.ndarray) and action_high.size == 1):
+            action_high = np.full(action_dim, float(np.array(action_high).item()), dtype=np.float32)
 
-        # Store action bounds - will be converted to tensors on first forward pass
-        self.action_low_val = action_low
-        self.action_high_val = action_high
-        self.action_scale = self.action_scale = torch.tensor(
-            (self.action_high_val - self.action_low_val) / 2.0, 
-            device=self.device, dtype=torch.float32
+        self.action_low_val = np.asarray(action_low, dtype=np.float32)
+        self.action_high_val = np.asarray(action_high, dtype=np.float32)
+
+        self.action_scale = torch.tensor(
+            (self.action_high_val - self.action_low_val) / 2.0,
+            device=self.device,
+            dtype=torch.float32,
         )
         self.action_bias = torch.tensor(
-            (self.action_high_val + self.action_low_val) / 2.0, 
-            device=self.device, dtype=torch.float32
+            (self.action_high_val + self.action_low_val) / 2.0,
+            device=self.device,
+            dtype=torch.float32,
         )
         
         # Actor head - outputs raw mean (pre-tanh)
@@ -148,9 +154,9 @@ class ContinuousActorCritic(BaseActorCritic):
         
         if deterministic:
             action = torch.tanh(raw_action_mean) * self.action_scale + self.action_bias
-            log_prob = torch.zeros(1, device=self.device)
-            entropy = torch.zeros(1, device=self.device)
-            return action, log_prob, entropy, value
+            batch_size = state.shape[0] if state.dim() > 1 else 1
+            zero = torch.zeros((batch_size, 1), device=self.device)
+            return action, zero, zero, value
 
         # Create normal distribution in raw space
         dist = Normal(raw_action_mean, std)
@@ -165,8 +171,10 @@ class ContinuousActorCritic(BaseActorCritic):
             # Then apply inverse tanh (clamp to avoid numerical issues)
             raw_action = torch.atanh(torch.clamp(normalized_action, -0.999, 0.999))
         
-        # Calculate log probability and entropy in raw space
-        log_prob = dist.log_prob(raw_action).sum(dim=-1, keepdim=True)
+        # Calculate log probability and entropy from raw space
+        # log(1 - tanh(raw_action)^2)
+        squash_correction = (2 * (np.log(2) - raw_action - F.softplus(-2 * raw_action))).sum(dim=-1, keepdim=True)
+        log_prob = dist.log_prob(raw_action).sum(dim=-1, keepdim=True) - squash_correction
         entropy = dist.entropy().sum(dim=-1, keepdim=True)
         
         # Apply tanh to constrain to [-1, 1] then scale to actual action bounds
@@ -191,8 +199,9 @@ class ContinuousActorCritic(BaseActorCritic):
         # Then apply inverse tanh (clamp to avoid numerical issues)
         raw_action = torch.atanh(torch.clamp(normalized_action, -0.999, 0.999))
         
-        # Calculate log probability and entropy in raw space
-        log_prob = dist.log_prob(raw_action).sum(dim=-1, keepdim=True)
+        # Calculate log probability and entropy in raw space with tanh correction
+        squash_correction = (2 * (np.log(2) - raw_action - F.softplus(-2 * raw_action))).sum(dim=-1, keepdim=True)
+        log_prob = dist.log_prob(raw_action).sum(dim=-1, keepdim=True) - squash_correction
         entropy = dist.entropy().sum(dim=-1, keepdim=True)
         
         return log_prob, entropy, value

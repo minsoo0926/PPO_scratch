@@ -6,7 +6,7 @@ import torch.optim as optim
 import numpy as np
 from abc import ABC, abstractmethod
 from .networks import DiscreteActorCritic, ContinuousActorCritic, BaseActorCritic
-from .memory import DiscreteMemory, ContinuousMemory
+from .memory import DiscreteMemory, ContinuousMemory, BaseMemory
 
 
 class BasePPOAgent(ABC):
@@ -66,7 +66,7 @@ class BasePPOAgent(ABC):
         pass
 
     @abstractmethod
-    def _create_memory(self, buffer_size, state_dim):
+    def _create_memory(self, buffer_size, state_dim) -> BaseMemory:
         """Create the appropriate memory buffer."""
         pass
 
@@ -318,7 +318,7 @@ class DiscretePPOAgent(BasePPOAgent):
         """Create discrete action network."""
         return DiscreteActorCritic(state_dim, action_dim, hidden_dim).to(self.device)
 
-    def _create_memory(self, buffer_size, state_dim):
+    def _create_memory(self, buffer_size, state_dim) -> DiscreteMemory:
         """Create discrete action memory buffer."""
         return DiscreteMemory(buffer_size, state_dim, self.device)
 
@@ -428,7 +428,7 @@ class ContinuousPPOAgent(BasePPOAgent):
             self.action_low, self.action_high
         ).to(self.device)
 
-    def _create_memory(self, buffer_size, state_dim):
+    def _create_memory(self, buffer_size, state_dim) -> ContinuousMemory:
         """Create continuous action memory buffer."""
         return ContinuousMemory(buffer_size, state_dim, self.action_dim, self.device)
 
