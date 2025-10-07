@@ -17,15 +17,10 @@ def create_ppo_agent(env, **kwargs):
         PPO agent (either DiscretePPOAgent or ContinuousPPOAgent)
     """
     # Handle both single and vectorized environments
-    if isinstance(env, vector.VectorEnv):
-        # For vectorized environments, use the single environment's spaces
-        obs_space = env.single_observation_space
-        action_space = env.single_action_space
-    else:
-        # For single environments
-        obs_space = env.observation_space
-        action_space = env.action_space
-    
+    obs_space = env.single_observation_space
+    action_space = env.single_action_space
+    n_envs = env.num_envs if isinstance(env, vector.VectorEnv) else 1
+
     # Ensure obs_space.shape is available
     if hasattr(obs_space, 'shape') and obs_space.shape is not None:
         state_dim = obs_space.shape[0]
@@ -38,7 +33,7 @@ def create_ppo_agent(env, **kwargs):
     
     if isinstance(action_space, gym.spaces.Discrete):
         action_dim = action_space.n
-        return DiscretePPOAgent(state_dim=state_dim, action_dim=action_dim, **ppo_kwargs)
+        return DiscretePPOAgent(state_dim=state_dim, action_dim=action_dim, n_envs=n_envs, **ppo_kwargs)
     
     elif isinstance(action_space, gym.spaces.Box):
         return ContinuousPPOAgent(
@@ -46,6 +41,7 @@ def create_ppo_agent(env, **kwargs):
             action_dim=action_space.shape[0],
             action_low=action_space.low,
             action_high=action_space.high,
+            n_envs=n_envs,
             **ppo_kwargs
         )
     

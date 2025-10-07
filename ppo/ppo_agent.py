@@ -27,6 +27,7 @@ class BasePPOAgent(ABC):
         buffer_size=2048,
         batch_size=64,
         epochs=10,
+        n_envs=1,
         device='cpu'
     ):
         """Initialize base PPO agent."""
@@ -41,6 +42,7 @@ class BasePPOAgent(ABC):
         self.batch_size = batch_size
         self.epochs = epochs
         self.device = device
+        self.n_envs = n_envs
         
         # Training statistics
         self.training_stats = {
@@ -58,7 +60,7 @@ class BasePPOAgent(ABC):
         # Initialize network, optimizer and memory (implemented in subclasses)
         self.network = self._create_network(state_dim, action_dim, hidden_dim)
         self.optimizer = optim.Adam(self.network.parameters(), lr=lr)
-        self.memory = self._create_memory(buffer_size, state_dim)
+        self.memory = self._create_memory(n_envs, buffer_size, state_dim)
 
     @abstractmethod
     def _create_network(self, state_dim, action_dim, hidden_dim) -> BaseActorCritic:
@@ -66,33 +68,33 @@ class BasePPOAgent(ABC):
         pass
 
     @abstractmethod
-    def _create_memory(self, buffer_size, state_dim) -> BaseMemory:
+    def _create_memory(self, n_envs, buffer_size, state_dim) -> BaseMemory:
         """Create the appropriate memory buffer."""
         pass
 
     @abstractmethod
-    def get_action(self, state, deterministic=False):
+    def get_action(self, states, deterministic=False):
         """Select action for given state."""
         pass
 
-    def store_experience(self, state, action, reward, value, log_prob, done):
+    def store_experience(self, idx_env, state, action, reward, value, log_prob, done):
         """Store experience in memory buffer."""
-        self.memory.store(state, action, reward, value, log_prob, done)
-    
+        self.memory.store(idx_env, state, action, reward, value, log_prob, done)
+
     def compute_advantages(self, rewards, values, dones, next_value=0):
         """Compute GAE (Generalized Advantage Estimation) advantages."""
         advantages = torch.zeros_like(rewards)
         returns = torch.zeros_like(rewards)
-        
-        gae = 0
+
+        gae = torch.zeros_like(rewards[0])
         next_val = next_value
         
         for t in reversed(range(len(rewards))):
             if t == len(rewards) - 1:
-                next_non_terminal = 1.0 - float(dones[t])
+                next_non_terminal = torch.full_like(rewards[t], 1.0) - dones[t].float()
                 next_value = next_val
             else:
-                next_non_terminal = 1.0 - float(dones[t])
+                next_non_terminal = torch.full_like(rewards[t], 1.0) - dones[t].float()
                 next_value = values[t + 1]
             
             delta = rewards[t] + self.gamma * next_value * next_non_terminal - values[t]
@@ -129,7 +131,8 @@ class BasePPOAgent(ABC):
                 'entropy_coef': self.entropy_coef,
                 'max_grad_norm': self.max_grad_norm,
                 'batch_size': self.batch_size,
-                'epochs': self.epochs
+                'epochs': self.epochs,
+                'n_envs': self.n_envs,
             }
         }
         
@@ -138,10 +141,6 @@ class BasePPOAgent(ABC):
             save_dict['model_metadata']['action_high'] = self.action_high
 
         torch.save(save_dict, filepath)
-        # print(f"Model saved to {filepath}")
-        # print(f"  - State dim: {self.state_dim}")
-        # print(f"  - Action dim: {self.action_dim}")
-        # print(f"  - Agent type: {self.__class__.__name__}")
     
     @classmethod
     def load(cls, filepath, strict=True):
@@ -182,7 +181,8 @@ class BasePPOAgent(ABC):
                 entropy_coef=metadata.get('entropy_coef', 0.01),
                 max_grad_norm=metadata.get('max_grad_norm', 0.5),
                 batch_size=metadata.get('batch_size', 64),
-                epochs=metadata.get('epochs', 10)
+                epochs=metadata.get('epochs', 10),
+                n_envs=metadata.get('n_envs', 1)
             )
         elif metadata.get('agent_type') == 'ContinuousPPOAgent':
             agent = ContinuousPPOAgent(
@@ -201,7 +201,8 @@ class BasePPOAgent(ABC):
                 entropy_coef=metadata.get('entropy_coef', 0.01),
                 max_grad_norm=metadata.get('max_grad_norm', 0.5),
                 batch_size=metadata.get('batch_size', 64),
-                epochs=metadata.get('epochs', 10)
+                epochs=metadata.get('epochs', 10),
+                n_envs=metadata.get('n_envs', 1)
             )
         else:
             raise ValueError(f"Unknown agent type: {metadata.get('agent_type')}")
@@ -318,25 +319,11 @@ class DiscretePPOAgent(BasePPOAgent):
         """Create discrete action network."""
         return DiscreteActorCritic(state_dim, action_dim, hidden_dim).to(self.device)
 
-    def _create_memory(self, buffer_size, state_dim) -> DiscreteMemory:
+    def _create_memory(self, n_envs, buffer_size, state_dim) -> DiscreteMemory:
         """Create discrete action memory buffer."""
-        return DiscreteMemory(buffer_size, state_dim, self.device)
+        return DiscreteMemory(n_envs, buffer_size, state_dim, self.device)
 
-    def get_action(self, state, deterministic=False):
-        """Select action for given state."""
-        # Convert to tensor safely
-        if not isinstance(state, torch.Tensor):
-            # Convert any array-like input to tensor directly
-            state = torch.tensor(np.array(state), dtype=torch.float32, device=self.device)
-        else:
-            state = state.to(self.device)
-        
-        with torch.no_grad():
-            action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0), deterministic=deterministic)
-        
-        return action.item(), log_prob.item(), value.item()
-    
-    def get_actions_batch(self, states, deterministic=False):
+    def get_action(self, states, deterministic=False):
         """Select actions for batch of states (for vectorized environments)."""
         # Convert to tensor safely
         if not isinstance(states, torch.Tensor):
@@ -446,26 +433,11 @@ class ContinuousPPOAgent(BasePPOAgent):
             self.action_low, self.action_high
         ).to(self.device)
 
-    def _create_memory(self, buffer_size, state_dim) -> ContinuousMemory:
+    def _create_memory(self, n_envs, buffer_size, state_dim) -> ContinuousMemory:
         """Create continuous action memory buffer."""
-        return ContinuousMemory(buffer_size, state_dim, self.action_dim, self.device)
+        return ContinuousMemory(n_envs, buffer_size, state_dim, self.action_dim, self.device)
 
-    def get_action(self, state, deterministic=False):
-        """Select action for given state."""
-        # Convert to tensor safely
-        if not isinstance(state, torch.Tensor):
-            # Convert any array-like input to tensor directly
-            state = torch.tensor(np.array(state), dtype=torch.float32, device=self.device)
-        else:
-            state = state.to(self.device)
-        breakpoint()
-        with torch.no_grad():
-            action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0), deterministic=deterministic)
-        
-        # Don't flatten log_prob - keep it as scalar sum for multi-dimensional actions
-        return action.cpu().numpy().flatten(), log_prob.cpu().numpy(), value.item()
-    
-    def get_actions_batch(self, states, deterministic=False):
+    def get_action(self, states, deterministic=False):
         """Select actions for batch of states (for vectorized environments)."""
         # Convert to tensor safely
         if not isinstance(states, torch.Tensor):

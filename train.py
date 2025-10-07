@@ -5,7 +5,8 @@ import numpy as np
 import torch
 import gymnasium as gym
 from gymnasium import vector
-from gymnasium.wrappers.numpy_to_torch import NumpyToTorch
+from gymnasium.wrappers.numpy_to_torch import NumpyToTorch as SingleNumpyToTorch
+from gymnasium.wrappers.vector.numpy_to_torch import NumpyToTorch as VectorNumpyToTorch
 import matplotlib.pyplot as plt
 from ppo import create_ppo_agent, print_action_space_info
 from config import ENV_CONFIG
@@ -114,7 +115,8 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
     print(f"Creating vectorized environment with {n_envs} parallel environments")
     # Create multiple environments for vectorization
-    env = gym.make_vec(env_config['id'], render_mode=None, num_envs=n_envs, wrappers=[NumpyToTorch])
+    env = gym.make_vec(env_config['id'], render_mode=None, num_envs=n_envs)
+    env = VectorNumpyToTorch(env)  # Convert observations to PyTorch tensors
 
     # Print action space information
     print_action_space_info(env)
@@ -187,16 +189,10 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
         while not np.all(dones) and timestep < total_timesteps:
             # Get actions for all environments at once (batch processing)
-            actions, log_probs, values = agent.get_actions_batch(states)
+            actions, log_probs, values = agent.get_action(states)
 
             # Take step in all environments
             next_states, rewards, terminateds, truncateds, _ = env.step(actions)
-
-            # Convert to numpy arrays and tensors
-            rewards = np.array(rewards)
-            values = [float(v) for v in values]
-            terminateds = np.array(terminateds)
-            truncateds = np.array(truncateds)
             new_dones = terminateds | truncateds
 
             # Store experiences for all environments
@@ -208,11 +204,11 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
                     reward_val = float(rewards[i])
                     value_val = values[i]
                     # Keep log_prob as tensor for memory compatibility
-                    log_prob_val = log_probs[i].cpu() if isinstance(log_probs, torch.Tensor) else torch.tensor([float(log_probs[i])])
+                    log_prob_val = log_probs[i]
                     done_val = bool(new_dones[i])
 
                     agent.store_experience(
-                        state, action_val, reward_val,
+                        i, state, action_val, reward_val,
                         value_val, log_prob_val, done_val
                     )
                     episode_rewards_batch[i] += float(rewards[i])
@@ -220,7 +216,8 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
             # Update counters
             timestep += np.sum(~dones)  # Count active environments
-
+            new_dones = new_dones.cpu().numpy()
+            
             # Update done status and collect episode stats
             newly_done = new_dones & ~dones
             if np.any(newly_done):
@@ -237,13 +234,12 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
             # Update agent when buffer is full
             if agent.memory.is_full():
-                # For vectorized environments, use first non-done state as next_state
-                next_state = None
-                for i in range(n_envs):
-                    if not dones[i]:
-                        next_state = states[i]
-                        break
-                agent.update(next_state)
+                # next_states = None
+                # for i in range(n_envs):
+                #     if not dones[i]:
+                #         next_states = states[i]
+                #         break
+                agent.update(next_states)
 
         # Print progress
         if episode // 100 != prior_logging // 100:
@@ -314,7 +310,7 @@ def test_agent(env_config=ENV_CONFIG, model_path=None, num_episodes=10):
     test_env_config['n_envs'] = 1  # Force single environment for testing
 
     env: gym.Env = gym.make(test_env_config['id'], render_mode="human")
-    env = NumpyToTorch(env)  # Convert observations to PyTorch tensors
+    env = SingleNumpyToTorch(env)  # Convert observations to PyTorch tensors
 
     # Set device
     device_str = "cuda" if torch.cuda.is_available() else "cpu"
