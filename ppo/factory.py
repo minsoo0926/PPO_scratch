@@ -17,8 +17,12 @@ def create_ppo_agent(env, **kwargs):
         PPO agent (either DiscretePPOAgent or ContinuousPPOAgent)
     """
     # Handle both single and vectorized environments
-    obs_space = env.single_observation_space
-    action_space = env.single_action_space
+    if isinstance(env, vector.VectorEnv):
+        obs_space = env.single_observation_space
+        action_space = env.single_action_space
+    else:
+        obs_space = env.observation_space
+        action_space = env.action_space
     n_envs = env.num_envs if isinstance(env, vector.VectorEnv) else 1
 
     # Ensure obs_space.shape is available
