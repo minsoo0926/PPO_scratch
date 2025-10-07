@@ -331,6 +331,16 @@ class DiscretePPOAgent(BasePPOAgent):
             action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0), deterministic=deterministic)
         
         return action.item(), log_prob.item(), value.item()
+    
+    def get_actions_batch(self, states, deterministic=False):
+        """Select actions for batch of states (for vectorized environments)."""
+        if isinstance(states, np.ndarray):
+            states = torch.from_numpy(states).float().to(self.device)
+        
+        with torch.no_grad():
+            actions, log_probs, _, values = self.network.get_action_and_value(states, deterministic=deterministic)
+        
+        return actions, log_probs, values
 
     def update(self, next_state=None):
         """Update the policy using PPO algorithm."""
@@ -442,6 +452,16 @@ class ContinuousPPOAgent(BasePPOAgent):
         
         # Don't flatten log_prob - keep it as scalar sum for multi-dimensional actions
         return action.cpu().numpy().flatten(), log_prob.cpu().numpy(), value.item()
+    
+    def get_actions_batch(self, states, deterministic=False):
+        """Select actions for batch of states (for vectorized environments)."""
+        if isinstance(states, np.ndarray):
+            states = torch.from_numpy(states).float().to(self.device)
+        
+        with torch.no_grad():
+            actions, log_probs, _, values = self.network.get_action_and_value(states, deterministic=deterministic)
+        
+        return actions, log_probs, values
 
     def update(self, next_state=None):
         """Update the policy using PPO algorithm."""

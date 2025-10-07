@@ -18,6 +18,7 @@ ENV_CONFIG = {
     "batch_size": 64,
     "epochs": 8,
     "hidden_dim": 64,
+    "n_envs": 8,
 }
 
 # torch.autograd.set_detect_anomaly(True)

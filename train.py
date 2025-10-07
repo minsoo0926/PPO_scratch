@@ -4,6 +4,7 @@ import os
 import numpy as np
 import torch
 import gymnasium as gym
+from gymnasium import vector
 import matplotlib.pyplot as plt
 from ppo import create_ppo_agent, print_action_space_info
 from config import ENV_CONFIG
@@ -107,8 +108,19 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
         save_freq (int): Frequency of saving the model (in timesteps)
         resume_from (str, optional): Model filename to resume training from
     """
-    # Create environment
-    env: gym.Env = gym.make(env_config['id'], render_mode=None)
+    # Create environment - support both single and vectorized environments
+    n_envs = env_config.get('n_envs', 1)
+    
+    if n_envs > 1:
+        print(f"Creating vectorized environment with {n_envs} parallel environments")
+        # Create multiple environments for vectorization
+        env_fns = [lambda: gym.make(env_config['id'], render_mode=None) for _ in range(n_envs)]
+        env = vector.SyncVectorEnv(env_fns)
+        is_vectorized = True
+    else:
+        print(f"Creating single environment")
+        env = gym.make(env_config['id'], render_mode=None)
+        is_vectorized = False
     
     # Print action space information
     print_action_space_info(env)
@@ -170,38 +182,114 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
     print(f"Starting training on {env_config['id']}")
     print("-" * 50)
     
-    while timestep < total_timesteps:
-        state, _ = env.reset()
-        episode_reward = 0.0
-        episode_length = 0
-        done = False
-        
-        while not done and timestep < total_timesteps:
-            # Get action from agent
-            action, log_prob, value = agent.get_action(state)
+    if is_vectorized:
+        # Vectorized environment training with batch processing
+        while timestep < total_timesteps:
+            states, _ = env.reset()  # Shape: (n_envs, obs_dim)
+            states = torch.from_numpy(states).float().to(device_str)
+            episode_rewards_batch = np.zeros(n_envs)
+            episode_lengths_batch = np.zeros(n_envs)
+            dones = np.array([False] * n_envs)
             
-            # Take step in environment
-            next_state, reward, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
+            while not np.all(dones) and timestep < total_timesteps:
+                # Get actions for all environments at once (batch processing)
+                actions, log_probs, values = agent.get_actions_batch(states)
+                
+                # Convert to numpy for env.step()
+                if isinstance(actions, torch.Tensor):
+                    actions_np = actions.cpu().numpy()
+                else:
+                    actions_np = actions
+                
+                # Take step in all environments
+                next_states, rewards, terminateds, truncateds, _ = env.step(actions_np)
+                
+                # Convert to numpy arrays and tensors
+                rewards = np.array(rewards)
+                terminateds = np.array(terminateds)
+                truncateds = np.array(truncateds)
+                new_dones = terminateds | truncateds
+                next_states = torch.from_numpy(next_states).float().to(device_str)
+                
+                # Store experiences for all environments
+                for i in range(n_envs):
+                    if not dones[i]:
+                        # Convert tensor values to appropriate types for storage
+                        state_np = states[i].cpu().numpy()
+                        action_val = actions_np[i]
+                        reward_val = float(rewards[i])
+                        value_val = values[i].item() if isinstance(values, torch.Tensor) else float(values[i])
+                        # Keep log_prob as tensor for memory compatibility
+                        log_prob_val = log_probs[i].cpu() if isinstance(log_probs, torch.Tensor) else torch.tensor([float(log_probs[i])])
+                        done_val = bool(new_dones[i])
+                        
+                        agent.store_experience(
+                            state_np, action_val, reward_val, 
+                            value_val, log_prob_val, done_val
+                        )
+                        episode_rewards_batch[i] += float(rewards[i])
+                        episode_lengths_batch[i] += 1
+                
+                # Update counters
+                timestep += np.sum(~dones)  # Count active environments
+                
+                # Update done status and collect episode stats
+                newly_done = new_dones & ~dones
+                if np.any(newly_done):
+                    for i in range(n_envs):
+                        if newly_done[i]:
+                            episode_rewards.append(episode_rewards_batch[i])
+                            episode_lengths.append(episode_lengths_batch[i])
+                            episode += 1
+                            episode_rewards_batch[i] = 0.0
+                            episode_lengths_batch[i] = 0.0
+                
+                dones = new_dones
+                states = next_states
+                
+                # Update agent when buffer is full
+                if agent.memory.is_full():
+                    # For vectorized environments, use first non-done state as next_state
+                    next_state = None
+                    for i in range(n_envs):
+                        if not dones[i]:
+                            next_state = states[i].cpu().numpy()
+                            break
+                    agent.update(next_state)
+    else:
+        # Single environment training (original logic)
+        while timestep < total_timesteps:
+            state, _ = env.reset()
+            episode_reward = 0.0
+            episode_length = 0
+            done = False
             
-            # Store experience
-            agent.store_experience(state, action, reward, value, log_prob, done)
+            while not done and timestep < total_timesteps:
+                # Get action from agent
+                action, log_prob, value = agent.get_action(state)
+                
+                # Take step in environment
+                next_state, reward, terminated, truncated, _ = env.step(action)
+                done = terminated or truncated
+                
+                # Store experience
+                agent.store_experience(state, action, reward, value, log_prob, done)
+                
+                # Update counters
+                timestep += 1
+                episode_reward += float(reward)
+                episode_length += 1
+                
+                state = next_state
+                
+                # Update agent when buffer is full
+                if agent.memory.is_full():
+                    agent.update(next_state if not done else None)
             
-            # Update counters
-            timestep += 1
-            episode_reward += float(reward)
-            episode_length += 1
-            
-            state = next_state
-            
-            # Update agent when buffer is full
-            if agent.memory.is_full():
-                agent.update(next_state if not done else None)
-        
-        # Store episode statistics
-        episode_rewards.append(episode_reward)
-        episode_lengths.append(episode_length)
-        episode += 1
+            # Store episode statistics (single environment)
+            episode_rewards.append(episode_reward)
+            episode_lengths.append(episode_length)
+            episode += 1
         
         # Print progress
         if episode % 100 == 0:
@@ -264,7 +352,7 @@ def plot_training_results(episode_rewards, episode_lengths, window=100):
 
 def test_agent(env_config=ENV_CONFIG, model_path=None, num_episodes=10):
     """Test trained agent."""
-    # Create environment
+    # Create single environment for testing (no vectorization for testing)
     env: gym.Env = gym.make(env_config['id'], render_mode='human')
 
     # Set device
