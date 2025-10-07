@@ -388,7 +388,6 @@ class DiscretePPOAgent(BasePPOAgent):
                 
                 # Compute policy loss with clipped log probability ratio
                 log_ratio = new_log_probs.squeeze(-1) - batch_old_log_probs
-                log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
                 ratio = torch.exp(log_ratio)
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
@@ -507,7 +506,6 @@ class ContinuousPPOAgent(BasePPOAgent):
                 
                 # Compute policy loss with clipped log probability ratio
                 log_ratio = new_log_probs.squeeze(-1) - batch_old_log_probs
-                log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
                 ratio = torch.exp(log_ratio)
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages
