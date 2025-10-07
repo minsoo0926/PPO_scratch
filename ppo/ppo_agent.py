@@ -440,7 +440,8 @@ class ContinuousPPOAgent(BasePPOAgent):
         with torch.no_grad():
             action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0), deterministic=deterministic)
         
-        return action.cpu().numpy().flatten(), log_prob.cpu().numpy().flatten(), value.item()
+        # Don't flatten log_prob - keep it as scalar sum for multi-dimensional actions
+        return action.cpu().numpy().flatten(), log_prob.cpu().numpy(), value.item()
 
     def update(self, next_state=None):
         """Update the policy using PPO algorithm."""
@@ -495,8 +496,7 @@ class ContinuousPPOAgent(BasePPOAgent):
                 
                 # Compute policy loss with clipped log probability ratio
                 log_ratio = new_log_probs - batch_old_log_probs
-                # breakpoint()
-                # log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
+                log_ratio = torch.clamp(log_ratio, -20, 20)  # Prevent overflow in exp
                 ratio = torch.exp(log_ratio)
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * batch_advantages

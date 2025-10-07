@@ -6,3 +6,4 @@ gymnasium[classic-control]
 swig
 gymnasium[box2d]
 gymnasium_robotics[mujoco-py]
+stable-baselines3

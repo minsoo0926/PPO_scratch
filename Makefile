@@ -5,7 +5,7 @@
 
 # Default settings
 TIMESTEPS ?= 100000
-SAVE_FREQ ?= 10000
+SAVE_FREQ ?= 50000
 TEST_EPISODES ?= 10
 KEEP_MODELS ?= 5
 MODEL ?= ppo_model_final.pth
