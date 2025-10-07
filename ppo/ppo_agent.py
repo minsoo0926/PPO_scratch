@@ -359,6 +359,14 @@ class DiscretePPOAgent(BasePPOAgent):
         
         # Training loop
         for epoch in range(self.epochs):
+            # Flatten the first dimension
+            states = states.view(-1, self.state_dim)
+            actions = actions.view(-1)
+            old_log_probs = old_log_probs.view(-1)
+            advantages = advantages.view(-1)
+            returns = returns.view(-1)
+            values = values.view(-1)
+
             # Create mini-batches
             indices = torch.randperm(len(states), device=self.device)
             

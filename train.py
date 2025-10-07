@@ -236,22 +236,22 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
             if agent.memory.is_full():
                 agent.update(next_states)
 
-        # Print progress
-        if episode // 100 != prior_logging // 100:
-            avg_reward = np.mean(episode_rewards[-100:])
-            avg_length = np.mean(episode_lengths[-100:])
-            print(f"Episode {episode}, Timestep {timestep}")
-            print(f"Average Reward (last 100): {avg_reward:.2f}")
-            print(f"Average Length (last 100): {avg_length:.2f}")
-            print("-" * 30)
-            prior_logging = episode
+            # Print progress
+            if episode // 100 != prior_logging // 100:
+                avg_reward = np.mean(episode_rewards[-100:])
+                avg_length = np.mean(episode_lengths[-100:])
+                print(f"Episode {episode}, Timestep {timestep}")
+                print(f"Average Reward (last 100): {avg_reward:.2f}")
+                print(f"Average Length (last 100): {avg_length:.2f}")
+                print("-" * 30)
+                prior_logging = episode
 
-        # Save model periodically
-        if timestep // save_freq != prior_save // save_freq:
-            model_path = get_model_path(env_config['id'], f"ppo_model_{timestep // save_freq}.pth")
-            agent.save(model_path)
-            print(f"Model saved at timestep {timestep}: {model_path}")
-            prior_save = timestep
+            # Save model periodically
+            if timestep // save_freq != prior_save // save_freq:
+                model_path = get_model_path(env_config['id'], f"ppo_model_{timestep // save_freq}.pth")
+                agent.save(model_path)
+                print(f"Model saved at timestep {timestep}: {model_path}")
+                prior_save = timestep
 
     # Final update if there are remaining experiences
     if len(agent.memory) > 0:
