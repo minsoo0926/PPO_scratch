@@ -90,15 +90,15 @@ class BasePPOAgent(ABC):
         gae = torch.zeros(size=(self.n_envs, 1), device=self.device)
 
         for t in reversed(range(batch_len)):
-            if t == batch_len - 1:
-                next_non_terminal = torch.full_like(rewards[:, t:t+1], 1.0) - dones[:, t:t+1].float()
-            else:
-                next_non_terminal = torch.full_like(rewards[:, t:t+1], 1.0) - dones[:, t:t+1].float()
-                next_value = values[:, t + 1:t + 2]
-            delta = rewards[:, t:t+1] + self.gamma * next_value * next_non_terminal - values[:, t:t+1]
+            next_val = next_value if t == batch_len - 1 else values[:, t + 1:t + 2]
+            next_non_terminal = torch.full_like(rewards[:, t:t+1], 1.0) - dones[:, t:t+1].float()
+            delta = rewards[:, t:t+1] + self.gamma * next_val * next_non_terminal - values[:, t:t+1]
             gae = delta + self.gamma * self.lam * next_non_terminal * gae
             advantages[:, t:t+1] = gae
             returns[:, t:t+1] = advantages[:, t:t+1] + values[:, t:t+1]
+
+        advantages = (advantages - advantages.mean(-1, keepdim=True)) / (advantages.std(-1, keepdim=True) + 1e-8)
+        returns = (returns - returns.mean(-1, keepdim=True)) / (returns.std(-1, keepdim=True) + 1e-8)
         return advantages, returns
 
     @abstractmethod
@@ -351,25 +351,22 @@ class DiscretePPOAgent(BasePPOAgent):
         # Compute advantages and returns
         advantages, returns = self.compute_advantages(rewards, values, dones, next_value)
         
-        # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        
         # Convert to tensors
         old_log_probs = old_log_probs.detach()
         
+        # Flatten the first dimension
+        states = states.view(-1, self.state_dim)
+        actions = actions.view(-1)
+        old_log_probs = old_log_probs.view(-1)
+        advantages = advantages.view(-1)
+        returns = returns.view(-1)
+        values = values.view(-1)
+
+        # Update observation normalization
+        self.network.update_rms(states)
+
         # Training loop
         for epoch in range(self.epochs):
-            # Flatten the first dimension
-            states = states.view(-1, self.state_dim)
-            actions = actions.view(-1)
-            old_log_probs = old_log_probs.view(-1)
-            advantages = advantages.view(-1)
-            returns = returns.view(-1)
-            values = values.view(-1)
-
-            # Update observation normalization
-            self.network.update_obs_rms(states)
-
             # Create mini-batches
             indices = torch.randperm(len(states), device=self.device)
             
@@ -472,25 +469,22 @@ class ContinuousPPOAgent(BasePPOAgent):
         # Compute advantages and returns
         advantages, returns = self.compute_advantages(rewards, values, dones, next_value)
         
-        # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        
         # Convert to tensors and sum log probs over action dimensions
         old_log_probs = old_log_probs.detach()
 
+        # Flatten the first dimension
+        states = states.view(-1, self.state_dim)
+        actions = actions.view(-1, self.action_dim)
+        old_log_probs = old_log_probs.view(-1)
+        advantages = advantages.view(-1)
+        returns = returns.view(-1)
+        values = values.view(-1)
+
+        # Update observation normalization
+        self.network.update_rms(states)
+
         # Training loop
         for epoch in range(self.epochs):
-            # Flatten the first dimension
-            states = states.view(-1, self.state_dim)
-            actions = actions.view(-1, self.action_dim)
-            old_log_probs = old_log_probs.view(-1)
-            advantages = advantages.view(-1)
-            returns = returns.view(-1)
-            values = values.view(-1)
-
-            # Update observation normalization
-            self.network.update_obs_rms(states)
-
             # Create mini-batches
             indices = torch.randperm(len(states), device=self.device)
             
@@ -524,7 +518,7 @@ class ContinuousPPOAgent(BasePPOAgent):
                 entropy_loss = -entropy.mean()
                 
                 # Total loss
-                total_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy_loss
+                total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
 
                 # Backward pass
                 self.optimizer.zero_grad()

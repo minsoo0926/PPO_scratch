@@ -46,7 +46,7 @@ class BaseActorCritic(nn.Module, ABC):
         shared_features = self.shared_layers(state)
         return self.critic(shared_features)
     
-    def update_obs_rms(self, state):
+    def update_rms(self, state):
         """Update observation running mean and std."""
         self.obs_rms.update(state)
 
