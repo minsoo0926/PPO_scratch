@@ -111,7 +111,7 @@ class ContinuousMemory(BaseMemory):
         # Continuous action specific buffers
         self.action_dim = action_dim
         self.actions = torch.zeros((buffer_size, action_dim), dtype=torch.float32, device=device)
-        self.log_probs = torch.zeros((buffer_size, action_dim), dtype=torch.float32, device=device)
+        self.log_probs = torch.zeros((buffer_size, 1), dtype=torch.float32, device=device)
     
     def store(self, state, action, reward, value, log_prob, done):
         """Store a continuous action experience."""

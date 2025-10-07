@@ -5,8 +5,8 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from abc import ABC, abstractmethod
-from .networks import DiscreteActorCritic, ContinuousActorCritic
-from .memory import DiscreteMemory, ContinuousMemory
+from .networks import DiscreteActorCritic, ContinuousActorCritic, BaseActorCritic
+from .memory import DiscreteMemory, ContinuousMemory, BaseMemory
 
 
 class BasePPOAgent(ABC):
@@ -61,12 +61,12 @@ class BasePPOAgent(ABC):
         self.memory = self._create_memory(buffer_size, state_dim)
 
     @abstractmethod
-    def _create_network(self, state_dim, action_dim, hidden_dim):
+    def _create_network(self, state_dim, action_dim, hidden_dim) -> BaseActorCritic:
         """Create the appropriate network architecture."""
         pass
 
     @abstractmethod
-    def _create_memory(self, buffer_size, state_dim):
+    def _create_memory(self, buffer_size, state_dim) -> BaseMemory:
         """Create the appropriate memory buffer."""
         pass
 
@@ -314,11 +314,11 @@ class BasePPOAgent(ABC):
 class DiscretePPOAgent(BasePPOAgent):
     """PPO Agent for discrete action spaces."""
 
-    def _create_network(self, state_dim, action_dim, hidden_dim):
+    def _create_network(self, state_dim, action_dim, hidden_dim) -> DiscreteActorCritic:
         """Create discrete action network."""
         return DiscreteActorCritic(state_dim, action_dim, hidden_dim).to(self.device)
 
-    def _create_memory(self, buffer_size, state_dim):
+    def _create_memory(self, buffer_size, state_dim) -> DiscreteMemory:
         """Create discrete action memory buffer."""
         return DiscreteMemory(buffer_size, state_dim, self.device)
 
@@ -328,12 +328,7 @@ class DiscretePPOAgent(BasePPOAgent):
             state = torch.from_numpy(state).float().to(self.device)
         
         with torch.no_grad():
-            if deterministic:
-                action_logits, value = self.network(state.unsqueeze(0))
-                action = torch.argmax(action_logits, dim=-1)
-                log_prob = torch.zeros(1, device=self.device)
-            else:
-                action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0))
+            action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0), deterministic=deterministic)
         
         return action.item(), log_prob.item(), value.item()
 
@@ -426,14 +421,14 @@ class ContinuousPPOAgent(BasePPOAgent):
         self.action_high = action_high
         super().__init__(state_dim, action_dim, **kwargs)
 
-    def _create_network(self, state_dim, action_dim, hidden_dim):
+    def _create_network(self, state_dim, action_dim, hidden_dim) -> ContinuousActorCritic:
         """Create continuous action network."""
         return ContinuousActorCritic(
             state_dim, action_dim, hidden_dim, 
             self.action_low, self.action_high
         ).to(self.device)
 
-    def _create_memory(self, buffer_size, state_dim):
+    def _create_memory(self, buffer_size, state_dim) -> ContinuousMemory:
         """Create continuous action memory buffer."""
         return ContinuousMemory(buffer_size, state_dim, self.action_dim, self.device)
 
@@ -443,20 +438,10 @@ class ContinuousPPOAgent(BasePPOAgent):
             state = torch.from_numpy(state).float().to(self.device)
         
         with torch.no_grad():
-            if deterministic:
-                action_mean, value, _ = self.network(state.unsqueeze(0))
-                # For deterministic actions, use the mean and compute action bounds  
-                device = action_mean.device
-                action_low = torch.tensor(self.action_low, device=device, dtype=torch.float32)
-                action_high = torch.tensor(self.action_high, device=device, dtype=torch.float32)
-                action_scale = (action_high - action_low) / 2.0
-                action_bias = (action_high + action_low) / 2.0
-                action = torch.tanh(action_mean) * action_scale + action_bias
-                log_prob = torch.zeros(action.shape, device=self.device)
-            else:
-                action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0))
+            action, log_prob, _, value = self.network.get_action_and_value(state.unsqueeze(0), deterministic=deterministic)
         
-        return action.cpu().numpy().flatten(), log_prob.cpu().numpy().flatten(), value.item()
+        # Don't flatten log_prob - keep it as scalar sum for multi-dimensional actions
+        return action.cpu().numpy().flatten(), log_prob.cpu().numpy(), value.item()
 
     def update(self, next_state=None):
         """Update the policy using PPO algorithm."""
@@ -482,8 +467,8 @@ class ContinuousPPOAgent(BasePPOAgent):
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
         # Convert to tensors and sum log probs over action dimensions
-        old_log_probs = old_log_probs.sum(dim=-1, keepdim=False).detach()
-        
+        old_log_probs = old_log_probs.detach()
+
         # Training loop
         for epoch in range(self.epochs):
             # Create mini-batches
@@ -506,7 +491,7 @@ class ContinuousPPOAgent(BasePPOAgent):
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
                 # Sum over action dimensions
-                new_log_probs = new_log_probs.sum(dim=-1)
+                new_log_probs = new_log_probs
                 entropy = entropy.sum(dim=-1)
                 
                 # Compute policy loss with clipped log probability ratio
@@ -524,7 +509,7 @@ class ContinuousPPOAgent(BasePPOAgent):
                 entropy_loss = -entropy.mean()
                 
                 # Total loss
-                total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
+                total_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy_loss
                 
                 # Backward pass
                 self.optimizer.zero_grad()
