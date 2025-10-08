@@ -7,6 +7,7 @@ import numpy as np
 from abc import ABC, abstractmethod
 from .networks import DiscreteActorCritic, ContinuousActorCritic, BaseActorCritic
 from .memory import DiscreteMemory, ContinuousMemory, BaseMemory
+from config import ENV_CONFIG
 
 
 class BasePPOAgent(ABC):
@@ -90,15 +91,15 @@ class BasePPOAgent(ABC):
         gae = torch.zeros(size=(self.n_envs, 1), device=self.device)
 
         for t in reversed(range(batch_len)):
-            if t == batch_len - 1:
-                next_non_terminal = torch.full_like(rewards[:, t:t+1], 1.0) - dones[:, t:t+1].float()
-            else:
-                next_non_terminal = torch.full_like(rewards[:, t:t+1], 1.0) - dones[:, t:t+1].float()
-                next_value = values[:, t + 1:t + 2]
-            delta = rewards[:, t:t+1] + self.gamma * next_value * next_non_terminal - values[:, t:t+1]
+            next_val = next_value if t == batch_len - 1 else values[:, t + 1:t + 2]
+            next_non_terminal = torch.full_like(rewards[:, t:t+1], 1.0) - dones[:, t:t+1].float()
+            delta = rewards[:, t:t+1] + self.gamma * next_val * next_non_terminal - values[:, t:t+1]
             gae = delta + self.gamma * self.lam * next_non_terminal * gae
             advantages[:, t:t+1] = gae
             returns[:, t:t+1] = advantages[:, t:t+1] + values[:, t:t+1]
+
+        advantages = (advantages - advantages.mean(-1, keepdim=True)) / (advantages.std(-1, keepdim=True) + 1e-8)
+        returns = (returns - returns.mean(-1, keepdim=True)) / (returns.std(-1, keepdim=True) + 1e-8)
         return advantages, returns
 
     @abstractmethod
@@ -168,18 +169,18 @@ class BasePPOAgent(ABC):
                 state_dim=metadata['state_dim'],
                 action_dim=metadata['action_dim'],
                 hidden_dim=metadata['hidden_dim'],
-                lr=metadata['lr'],
-                buffer_size=metadata['buffer_size'],
-                device=metadata.get('device', 'cpu'),
-                gamma=metadata.get('gamma', 0.99),
-                lam=metadata.get('lam', 0.95),
-                clip_ratio=metadata.get('clip_ratio', 0.2),
-                value_coef=metadata.get('value_coef', 0.5),
-                entropy_coef=metadata.get('entropy_coef', 0.01),
-                max_grad_norm=metadata.get('max_grad_norm', 0.5),
-                batch_size=metadata.get('batch_size', 64),
-                epochs=metadata.get('epochs', 10),
-                n_envs=metadata.get('n_envs', 1)
+                lr=ENV_CONFIG.get('lr', 1e-4) if 'lr' in ENV_CONFIG else metadata['lr'],
+                buffer_size=ENV_CONFIG.get('buffer_size', 2048) if 'buffer_size' in ENV_CONFIG else metadata['buffer_size'],
+                device=ENV_CONFIG.get('device', 'cpu') if 'device' in ENV_CONFIG else metadata.get('device', 'cpu'),
+                gamma=ENV_CONFIG.get('gamma', 0.99) if 'gamma' in ENV_CONFIG else metadata.get('gamma', 0.99),
+                lam=ENV_CONFIG.get('lam', 0.95) if 'lam' in ENV_CONFIG else metadata.get('lam', 0.95),
+                clip_ratio=ENV_CONFIG.get('clip_ratio', 0.2) if 'clip_ratio' in ENV_CONFIG else metadata.get('clip_ratio', 0.2),
+                value_coef=ENV_CONFIG.get('value_coef', 0.5) if 'value_coef' in ENV_CONFIG else metadata.get('value_coef', 0.5),
+                entropy_coef=ENV_CONFIG.get('entropy_coef', 0.01) if 'entropy_coef' in ENV_CONFIG else metadata.get('entropy_coef', 0.01),
+                max_grad_norm=ENV_CONFIG.get('max_grad_norm', 0.5) if 'max_grad_norm' in ENV_CONFIG else metadata.get('max_grad_norm', 0.5),
+                batch_size=ENV_CONFIG.get('batch_size', 64) if 'batch_size' in ENV_CONFIG else metadata.get('batch_size', 64),
+                epochs=ENV_CONFIG.get('epochs', 10) if 'epochs' in ENV_CONFIG else metadata.get('epochs', 10),
+                n_envs=ENV_CONFIG.get('n_envs', 16) if 'n_envs' in ENV_CONFIG else metadata.get('n_envs', 1)
             )
         elif metadata.get('agent_type') == 'ContinuousPPOAgent':
             agent = ContinuousPPOAgent(
@@ -188,18 +189,18 @@ class BasePPOAgent(ABC):
                 action_low=metadata['action_low'],
                 action_high=metadata['action_high'],
                 hidden_dim=metadata['hidden_dim'],
-                lr=metadata['lr'],
-                buffer_size=metadata['buffer_size'],
-                device=metadata.get('device', 'cpu'),
-                gamma=metadata.get('gamma', 0.99),
-                lam=metadata.get('lam', 0.95),
-                clip_ratio=metadata.get('clip_ratio', 0.2),
-                value_coef=metadata.get('value_coef', 0.5),
-                entropy_coef=metadata.get('entropy_coef', 0.01),
-                max_grad_norm=metadata.get('max_grad_norm', 0.5),
-                batch_size=metadata.get('batch_size', 64),
-                epochs=metadata.get('epochs', 10),
-                n_envs=metadata.get('n_envs', 1)
+                lr=ENV_CONFIG.get('lr', 1e-4) if 'lr' in ENV_CONFIG else metadata['lr'],
+                buffer_size=ENV_CONFIG.get('buffer_size', 2048) if 'buffer_size' in ENV_CONFIG else metadata['buffer_size'],
+                device=ENV_CONFIG.get('device', 'cpu') if 'device' in ENV_CONFIG else metadata.get('device', 'cpu'),
+                gamma=ENV_CONFIG.get('gamma', 0.99) if 'gamma' in ENV_CONFIG else metadata.get('gamma', 0.99),
+                lam=ENV_CONFIG.get('lam', 0.95) if 'lam' in ENV_CONFIG else metadata.get('lam', 0.95),
+                clip_ratio=ENV_CONFIG.get('clip_ratio', 0.2) if 'clip_ratio' in ENV_CONFIG else metadata.get('clip_ratio', 0.2),
+                value_coef=ENV_CONFIG.get('value_coef', 0.5) if 'value_coef' in ENV_CONFIG else metadata.get('value_coef', 0.5),
+                entropy_coef=ENV_CONFIG.get('entropy_coef', 0.01) if 'entropy_coef' in ENV_CONFIG else metadata.get('entropy_coef', 0.01),
+                max_grad_norm=ENV_CONFIG.get('max_grad_norm', 0.5) if 'max_grad_norm' in ENV_CONFIG else metadata.get('max_grad_norm', 0.5),
+                batch_size=ENV_CONFIG.get('batch_size', 64) if 'batch_size' in ENV_CONFIG else metadata.get('batch_size', 64),
+                epochs=ENV_CONFIG.get('epochs', 10) if 'epochs' in ENV_CONFIG else metadata.get('epochs', 10),
+                n_envs=ENV_CONFIG.get('n_envs', 16) if 'n_envs' in ENV_CONFIG else metadata.get('n_envs', 1)
             )
         else:
             raise ValueError(f"Unknown agent type: {metadata.get('agent_type')}")
@@ -351,22 +352,22 @@ class DiscretePPOAgent(BasePPOAgent):
         # Compute advantages and returns
         advantages, returns = self.compute_advantages(rewards, values, dones, next_value)
         
-        # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        
         # Convert to tensors
         old_log_probs = old_log_probs.detach()
         
+        # Flatten the first dimension
+        states = states.view(-1, self.state_dim)
+        actions = actions.view(-1)
+        old_log_probs = old_log_probs.view(-1)
+        advantages = advantages.view(-1)
+        returns = returns.view(-1)
+        values = values.view(-1)
+
+        # Update observation normalization
+        self.network.update_rms(states)
+
         # Training loop
         for epoch in range(self.epochs):
-            # Flatten the first dimension
-            states = states.view(-1, self.state_dim)
-            actions = actions.view(-1)
-            old_log_probs = old_log_probs.view(-1)
-            advantages = advantages.view(-1)
-            returns = returns.view(-1)
-            values = values.view(-1)
-
             # Create mini-batches
             indices = torch.randperm(len(states), device=self.device)
             
@@ -469,22 +470,22 @@ class ContinuousPPOAgent(BasePPOAgent):
         # Compute advantages and returns
         advantages, returns = self.compute_advantages(rewards, values, dones, next_value)
         
-        # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        
         # Convert to tensors and sum log probs over action dimensions
         old_log_probs = old_log_probs.detach()
 
+        # Flatten the first dimension
+        states = states.view(-1, self.state_dim)
+        actions = actions.view(-1, self.action_dim)
+        old_log_probs = old_log_probs.view(-1)
+        advantages = advantages.view(-1)
+        returns = returns.view(-1)
+        values = values.view(-1)
+
+        # Update observation normalization
+        self.network.update_rms(states)
+
         # Training loop
         for epoch in range(self.epochs):
-            # Flatten the first dimension
-            states = states.view(-1, self.state_dim)
-            actions = actions.view(-1, self.action_dim)
-            old_log_probs = old_log_probs.view(-1)
-            advantages = advantages.view(-1)
-            returns = returns.view(-1)
-            values = values.view(-1)
-
             # Create mini-batches
             indices = torch.randperm(len(states), device=self.device)
             
@@ -518,7 +519,7 @@ class ContinuousPPOAgent(BasePPOAgent):
                 entropy_loss = -entropy.mean()
                 
                 # Total loss
-                total_loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy_loss
+                total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
 
                 # Backward pass
                 self.optimizer.zero_grad()

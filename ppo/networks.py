@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch.distributions import Categorical, Normal
 import numpy as np
 from abc import ABC, abstractmethod
+from ppo.normalizer import RunningMeanStd
 
 LOG_STD_MAX = 2.0
 LOG_STD_MIN = -5.0
@@ -26,7 +27,9 @@ class BaseActorCritic(nn.Module, ABC):
         super().__init__()
         self.state_dim = state_dim
         self.action_dim = action_dim
-        
+        self.obs_rms = RunningMeanStd(shape=(state_dim,))
+        self.obs_norm = True
+
         # Shared layers
         self.shared_layers = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
@@ -42,6 +45,10 @@ class BaseActorCritic(nn.Module, ABC):
         """Get state value."""
         shared_features = self.shared_layers(state)
         return self.critic(shared_features)
+    
+    def update_rms(self, state):
+        """Update observation running mean and std."""
+        self.obs_rms.update(state)
 
     @abstractmethod
     def get_action_and_value(self, state, action=None, deterministic=False):
@@ -69,6 +76,8 @@ class DiscreteActorCritic(BaseActorCritic):
 
     def forward(self, state):
         """Forward pass through both actor and critic."""
+        if self.obs_norm:
+            state = self.obs_rms.normalize(state)
         shared_features = self.shared_layers(state)
         action_logits = self.actor(shared_features)
         state_value = self.critic(shared_features)
@@ -141,6 +150,9 @@ class ContinuousActorCritic(BaseActorCritic):
 
     def forward(self, state):
         """Forward pass through both actor and critic."""
+        state = state.to(torch.float32)
+        if self.obs_norm:
+            state = self.obs_rms.normalize(state)
         shared_features = self.shared_layers(state)
         raw_action_mean = self.actor_mean(shared_features)
         state_value = self.critic(shared_features)

@@ -6,7 +6,7 @@
 # Default settings
 TIMESTEPS ?= 100000
 SAVE_FREQ ?= 50000
-TEST_EPISODES ?= 10
+TEST_EPISODES ?= 3
 KEEP_MODELS ?= 5
 MODEL ?= ppo_model_final.pth
 
@@ -67,7 +67,7 @@ resume: ## Resume training from a model checkpoint (use MODEL=filename)
 
 test: ## Test the trained agent
 	@echo "$(BLUE)Testing agent for $(TEST_EPISODES) episodes...$(NC)"
-	$(PYTHON) train.py --mode test --test_episodes $(TEST_EPISODES)
+	$(PYTHON) train.py --mode test --test_episodes $(TEST_EPISODES) --model_path $(MODEL)
 
 test-model: ## Test a specific model (use MODEL=filename)
 ifndef MODEL
