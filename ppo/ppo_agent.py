@@ -115,12 +115,22 @@ class BasePPOAgent(ABC):
         """Update the policy using PPO algorithm."""
         pass
 
-    def save(self, filepath):
+    def save(self, filepath, episode_rewards=None, episode_lengths=None):
         """Save the model with metadata."""
         save_dict = {
             'network_state_dict': self.network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'training_stats': self.training_stats,
+            # Save episode statistics for resume
+            'episode_rewards': episode_rewards if episode_rewards is not None else [],
+            'episode_lengths': episode_lengths if episode_lengths is not None else [],
+            # Save normalizer states explicitly
+            'obs_rms_mean': self.network.obs_rms.mean.clone(),
+            'obs_rms_var': self.network.obs_rms.var.clone(), 
+            'obs_rms_count': self.network.obs_rms.count.clone(),
+            'rew_rs_var': self.network.rew_rs.var.clone(),
+            'rew_rs_count': self.network.rew_rs.count.clone(),
+
             # Save model metadata for dimension validation and recreation
             'model_metadata': {
                 'state_dim': self.state_dim,
@@ -238,6 +248,21 @@ class BasePPOAgent(ABC):
         agent.training_stats = checkpoint.get('training_stats', agent.training_stats)
         print("✓ Training stats loaded successfully")
         
+        # Restore normalizer states explicitly
+        try:
+            if 'obs_rms_mean' in checkpoint:
+                agent.network.obs_rms.mean.copy_(checkpoint['obs_rms_mean'])
+                agent.network.obs_rms.var.copy_(checkpoint['obs_rms_var'])
+                agent.network.obs_rms.count.copy_(checkpoint['obs_rms_count'])
+                print(f"✓ Observation normalizer restored (count: {agent.network.obs_rms.count.item():.0f})")
+            
+            if 'rew_rs_var' in checkpoint:
+                agent.network.rew_rs.var.copy_(checkpoint['rew_rs_var'])
+                agent.network.rew_rs.count.copy_(checkpoint['rew_rs_count'])
+                print(f"✓ Reward normalizer restored (count: {agent.network.rew_rs.count.item():.0f}, std: {torch.sqrt(agent.network.rew_rs.var).item():.4f})")
+        except Exception as e:
+            print(f"WARNING: Failed to restore normalizer states: {e}")
+        
         return agent
     
     @classmethod
@@ -316,6 +341,21 @@ class BasePPOAgent(ABC):
             print(f"Failed with strict=True, trying strict=False: {e}")
             self.network.load_state_dict(checkpoint['network_state_dict'], strict=False)
             print(f"✓ Network weights loaded from {filepath} (some parameters ignored)")
+        
+        # Restore normalizer states for consistent behavior
+        try:
+            if 'obs_rms_mean' in checkpoint:
+                self.network.obs_rms.mean.copy_(checkpoint['obs_rms_mean'])
+                self.network.obs_rms.var.copy_(checkpoint['obs_rms_var'])
+                self.network.obs_rms.count.copy_(checkpoint['obs_rms_count'])
+                print(f"✓ Observation normalizer restored (count: {self.network.obs_rms.count.item():.0f})")
+            
+            if 'rew_rs_var' in checkpoint:
+                self.network.rew_rs.var.copy_(checkpoint['rew_rs_var'])
+                self.network.rew_rs.count.copy_(checkpoint['rew_rs_count'])
+                print(f"✓ Reward normalizer restored (count: {self.network.rew_rs.count.item():.0f}, std: {torch.sqrt(self.network.rew_rs.var).item():.4f})")
+        except Exception as e:
+            print(f"WARNING: Failed to restore normalizer states: {e}")
 
 
 class DiscretePPOAgent(BasePPOAgent):
