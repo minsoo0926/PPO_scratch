@@ -28,6 +28,7 @@ class BaseActorCritic(nn.Module, ABC):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.obs_rms = RunningMeanStd(shape=(state_dim,))
+        self.rew_rms = RunningMeanStd(shape=(1,))
         self.obs_norm = True
 
         # Shared layers
@@ -49,6 +50,11 @@ class BaseActorCritic(nn.Module, ABC):
     def update_rms(self, state):
         """Update observation running mean and std."""
         self.obs_rms.update(state)
+
+    def forward_rew_rms(self, reward):
+        """Update reward running mean and std."""
+        self.rew_rms.update(reward)
+        return self.rew_rms.normalize(reward)
 
     @abstractmethod
     def get_action_and_value(self, state, action=None, deterministic=False):

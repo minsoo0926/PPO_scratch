@@ -82,6 +82,15 @@ class BasePPOAgent(ABC):
         """Store experience in memory buffer."""
         self.memory.store(idx_env, state, action, reward, value, log_prob, done)
 
+    def normalize_rewards(self, rewards):
+        """Normalize rewards across the batch."""
+        with torch.no_grad():
+            shape = rewards.shape
+            rewards = rewards.view(-1)
+            rewards = self.network.forward_rew_rms(rewards)
+            rewards = rewards.view(shape)
+        return rewards
+
     def compute_advantages(self, rewards, values, dones, next_value):
         """Compute GAE (Generalized Advantage Estimation) advantages."""
         advantages = torch.zeros_like(rewards)
@@ -99,7 +108,6 @@ class BasePPOAgent(ABC):
             returns[:, t:t+1] = advantages[:, t:t+1] + values[:, t:t+1]
 
         advantages = (advantages - advantages.mean(-1, keepdim=True)) / (advantages.std(-1, keepdim=True) + 1e-8)
-        returns = (returns - returns.mean(-1, keepdim=True)) / (returns.std(-1, keepdim=True) + 1e-8)
         return advantages, returns
 
     @abstractmethod
@@ -342,7 +350,8 @@ class DiscretePPOAgent(BasePPOAgent):
         
         # Get all experiences from memory
         states, actions, rewards, values, old_log_probs, dones = self.memory.get()
-        
+        rewards = self.normalize_rewards(rewards)
+
         # Compute next value for advantage calculation
         next_value = torch.zeros(size=(self.n_envs, 1), device=self.device)
         if next_state is not None:
@@ -460,7 +469,8 @@ class ContinuousPPOAgent(BasePPOAgent):
         
         # Get all experiences from memory
         states, actions, rewards, values, old_log_probs, dones = self.memory.get()
-        
+        rewards = self.normalize_rewards(rewards)
+
         # Compute next value for advantage calculation
         next_value = torch.zeros(size=(self.n_envs, 1), device=self.device)
         if next_state is not None:
