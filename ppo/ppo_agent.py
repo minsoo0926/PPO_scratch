@@ -86,6 +86,7 @@ class BasePPOAgent(ABC):
         """Normalize rewards across the batch."""
         with torch.no_grad():
             shape = rewards.shape
+            rewards = rewards.to(self.device)
             rewards = rewards.view(-1)
             rewards = self.network.forward_rew_rs(rewards)
             rewards = rewards.view(shape)
@@ -262,7 +263,9 @@ class BasePPOAgent(ABC):
                 print(f"✓ Reward normalizer restored (count: {agent.network.rew_rs.count.item():.0f}, std: {torch.sqrt(agent.network.rew_rs.var).item():.4f})")
         except Exception as e:
             print(f"WARNING: Failed to restore normalizer states: {e}")
-        
+        first_param = next(iter(agent.optimizer.state))
+        opt_step = agent.optimizer.state[first_param].get('step', 0)
+        print(f"✓ DEBUG- optimizer step: {opt_step}")
         return agent
     
     @classmethod
