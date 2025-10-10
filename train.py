@@ -144,6 +144,8 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
     # Resume from existing model if specified
     start_timestep = 0
+    checkpoint = None
+    
     if resume_from:
         if not os.path.exists(resume_from):
             # Try to find it in the environment directory
@@ -156,6 +158,9 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
                 return None, [], []
 
         print(f"Resuming training from: {resume_from}")
+        
+        # Load checkpoint to get episode statistics
+        checkpoint = torch.load(resume_from, map_location='cpu', weights_only=False)
         agent.load(resume_from)
 
         # Extract timestep from filename if possible
@@ -171,11 +176,22 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
     # Training variables
     timestep = start_timestep
-    episode = 0
     prior_logging = 0
     prior_save = 0
-    episode_rewards = []
-    episode_lengths = []
+    
+    # Initialize episode statistics
+    if checkpoint is not None:
+        episode_rewards = checkpoint.get('episode_rewards', [])
+        episode_lengths = checkpoint.get('episode_lengths', [])
+        episode = len(episode_rewards)
+        print(f"Resumed with {len(episode_rewards)} previous episodes")
+        if episode_rewards:
+            recent_avg = np.mean(episode_rewards[-100:]) if len(episode_rewards) >= 100 else np.mean(episode_rewards)
+            print(f"Recent average reward: {recent_avg:.2f}")
+    else:
+        episode_rewards = []
+        episode_lengths = []
+        episode = 0
 
     print(f"Starting training on {env_config['id']}")
     print("-" * 50)
@@ -248,8 +264,8 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
             # Save model periodically
             if timestep // save_freq != prior_save // save_freq:
-                model_path = get_model_path(env_config['id'], f"ppo_model_{timestep // save_freq}.pth")
-                agent.save(model_path)
+                model_path = get_model_path(env_config['id'], f"ppo_model_{timestep // save_freq * save_freq}.pth")
+                agent.save(model_path, episode_rewards, episode_lengths)
                 print(f"Model saved at timestep {timestep}: {model_path}")
                 prior_save = timestep
 
@@ -259,7 +275,7 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
     # Save final model
     final_model_path = get_model_path(env_config['id'], "ppo_model_final.pth")
-    agent.save(final_model_path)
+    agent.save(final_model_path, episode_rewards, episode_lengths)
     print(f"Final model saved: {final_model_path}")
 
     # Close environment

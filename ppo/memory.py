@@ -49,7 +49,7 @@ class BaseMemory(ABC):
         pass
 
     @abstractmethod
-    def get(self):
+    def get(self) -> tuple:
         """Get all stored experiences."""
         pass
 

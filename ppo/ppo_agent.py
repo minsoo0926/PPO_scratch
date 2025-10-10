@@ -82,6 +82,16 @@ class BasePPOAgent(ABC):
         """Store experience in memory buffer."""
         self.memory.store(idx_env, state, action, reward, value, log_prob, done)
 
+    def normalize_rewards(self, rewards):
+        """Normalize rewards across the batch."""
+        with torch.no_grad():
+            shape = rewards.shape
+            rewards = rewards.to(self.device)
+            rewards = rewards.view(-1)
+            rewards = self.network.forward_rew_rs(rewards)
+            rewards = rewards.view(shape)
+        return rewards
+
     def compute_advantages(self, rewards, values, dones, next_value):
         """Compute GAE (Generalized Advantage Estimation) advantages."""
         advantages = torch.zeros_like(rewards)
@@ -99,7 +109,6 @@ class BasePPOAgent(ABC):
             returns[:, t:t+1] = advantages[:, t:t+1] + values[:, t:t+1]
 
         advantages = (advantages - advantages.mean(-1, keepdim=True)) / (advantages.std(-1, keepdim=True) + 1e-8)
-        returns = (returns - returns.mean(-1, keepdim=True)) / (returns.std(-1, keepdim=True) + 1e-8)
         return advantages, returns
 
     @abstractmethod
@@ -107,12 +116,22 @@ class BasePPOAgent(ABC):
         """Update the policy using PPO algorithm."""
         pass
 
-    def save(self, filepath):
+    def save(self, filepath, episode_rewards=None, episode_lengths=None):
         """Save the model with metadata."""
         save_dict = {
             'network_state_dict': self.network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'training_stats': self.training_stats,
+            # Save episode statistics for resume
+            'episode_rewards': episode_rewards if episode_rewards is not None else [],
+            'episode_lengths': episode_lengths if episode_lengths is not None else [],
+            # Save normalizer states explicitly
+            'obs_rms_mean': self.network.obs_rms.mean.clone(),
+            'obs_rms_var': self.network.obs_rms.var.clone(), 
+            'obs_rms_count': self.network.obs_rms.count.clone(),
+            'rew_rs_var': self.network.rew_rs.var.clone(),
+            'rew_rs_count': self.network.rew_rs.count.clone(),
+
             # Save model metadata for dimension validation and recreation
             'model_metadata': {
                 'state_dim': self.state_dim,
@@ -230,6 +249,23 @@ class BasePPOAgent(ABC):
         agent.training_stats = checkpoint.get('training_stats', agent.training_stats)
         print("✓ Training stats loaded successfully")
         
+        # Restore normalizer states explicitly
+        try:
+            if 'obs_rms_mean' in checkpoint:
+                agent.network.obs_rms.mean.copy_(checkpoint['obs_rms_mean'])
+                agent.network.obs_rms.var.copy_(checkpoint['obs_rms_var'])
+                agent.network.obs_rms.count.copy_(checkpoint['obs_rms_count'])
+                print(f"✓ Observation normalizer restored (count: {agent.network.obs_rms.count.item():.0f})")
+            
+            if 'rew_rs_var' in checkpoint:
+                agent.network.rew_rs.var.copy_(checkpoint['rew_rs_var'])
+                agent.network.rew_rs.count.copy_(checkpoint['rew_rs_count'])
+                print(f"✓ Reward normalizer restored (count: {agent.network.rew_rs.count.item():.0f}, std: {torch.sqrt(agent.network.rew_rs.var).item():.4f})")
+        except Exception as e:
+            print(f"WARNING: Failed to restore normalizer states: {e}")
+        first_param = next(iter(agent.optimizer.state))
+        opt_step = agent.optimizer.state[first_param].get('step', 0)
+        print(f"✓ DEBUG- optimizer step: {opt_step}")
         return agent
     
     @classmethod
@@ -308,6 +344,21 @@ class BasePPOAgent(ABC):
             print(f"Failed with strict=True, trying strict=False: {e}")
             self.network.load_state_dict(checkpoint['network_state_dict'], strict=False)
             print(f"✓ Network weights loaded from {filepath} (some parameters ignored)")
+        
+        # Restore normalizer states for consistent behavior
+        try:
+            if 'obs_rms_mean' in checkpoint:
+                self.network.obs_rms.mean.copy_(checkpoint['obs_rms_mean'])
+                self.network.obs_rms.var.copy_(checkpoint['obs_rms_var'])
+                self.network.obs_rms.count.copy_(checkpoint['obs_rms_count'])
+                print(f"✓ Observation normalizer restored (count: {self.network.obs_rms.count.item():.0f})")
+            
+            if 'rew_rs_var' in checkpoint:
+                self.network.rew_rs.var.copy_(checkpoint['rew_rs_var'])
+                self.network.rew_rs.count.copy_(checkpoint['rew_rs_count'])
+                print(f"✓ Reward normalizer restored (count: {self.network.rew_rs.count.item():.0f}, std: {torch.sqrt(self.network.rew_rs.var).item():.4f})")
+        except Exception as e:
+            print(f"WARNING: Failed to restore normalizer states: {e}")
 
 
 class DiscretePPOAgent(BasePPOAgent):
@@ -342,7 +393,8 @@ class DiscretePPOAgent(BasePPOAgent):
         
         # Get all experiences from memory
         states, actions, rewards, values, old_log_probs, dones = self.memory.get()
-        
+        rewards = self.normalize_rewards(rewards)
+
         # Compute next value for advantage calculation
         next_value = torch.zeros(size=(self.n_envs, 1), device=self.device)
         if next_state is not None:
@@ -364,7 +416,7 @@ class DiscretePPOAgent(BasePPOAgent):
         values = values.view(-1)
 
         # Update observation normalization
-        self.network.update_rms(states)
+        self.network.update_obs_rms(states)
 
         # Training loop
         for epoch in range(self.epochs):
@@ -460,7 +512,8 @@ class ContinuousPPOAgent(BasePPOAgent):
         
         # Get all experiences from memory
         states, actions, rewards, values, old_log_probs, dones = self.memory.get()
-        
+        rewards = self.normalize_rewards(rewards)
+
         # Compute next value for advantage calculation
         next_value = torch.zeros(size=(self.n_envs, 1), device=self.device)
         if next_state is not None:
@@ -482,7 +535,7 @@ class ContinuousPPOAgent(BasePPOAgent):
         values = values.view(-1)
 
         # Update observation normalization
-        self.network.update_rms(states)
+        self.network.update_obs_rms(states)
 
         # Training loop
         for epoch in range(self.epochs):
@@ -540,8 +593,8 @@ class ContinuousPPOAgent(BasePPOAgent):
 # Legacy class for backward compatibility
 class PPOAgent:
     """Factory class that creates appropriate PPO agent based on action space."""
-    
-    def __new__(cls, state_dim, action_dim, continuous_space=None, action_low=-1.0, action_high=1.0, **kwargs):
+
+    def __new__(cls, state_dim, action_dim, continuous_space=None, action_low=np.array([-1.0]), action_high=np.array([1.0]), **kwargs):
         if continuous_space is not None:
             # Extract bounds from continuous_space if provided
             if hasattr(continuous_space, 'low') and hasattr(continuous_space, 'high'):
