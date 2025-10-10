@@ -21,6 +21,9 @@ ENV_CONFIG = {
     "epochs": 10,
     "hidden_dim": 64,
     "n_envs": 8,
+    "kl_coef": 1.0,
+    "target_kl": 0.01,
+    "adaptive_kl": True,
 }
 
 # torch.autograd.set_detect_anomaly(True)

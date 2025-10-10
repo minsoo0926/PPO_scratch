@@ -23,6 +23,9 @@ class BasePPOAgent(ABC):
         clip_ratio=0.2,
         value_coef=0.5,
         entropy_coef=0.01,
+        kl_coef=0.0,
+        target_kl=0.01,
+        adaptive_kl=True,
         max_grad_norm=0.5,
         hidden_dim=64,
         buffer_size=2048,
@@ -39,6 +42,9 @@ class BasePPOAgent(ABC):
         self.clip_ratio = clip_ratio
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
+        self.kl_coef = kl_coef
+        self.target_kl = target_kl
+        self.adaptive_kl = adaptive_kl
         self.max_grad_norm = max_grad_norm
         self.batch_size = batch_size
         self.epochs = epochs
@@ -50,6 +56,8 @@ class BasePPOAgent(ABC):
             'policy_loss': [],
             'value_loss': [],
             'entropy_loss': [],
+            'kl_loss': [],
+            'kl_divergence': [],
             'total_loss': []
         }
         
@@ -111,6 +119,23 @@ class BasePPOAgent(ABC):
         advantages = (advantages - advantages.mean(-1, keepdim=True)) / (advantages.std(-1, keepdim=True) + 1e-8)
         return advantages, returns
 
+    def compute_kl_divergence(self, old_log_probs, new_log_probs, old_entropy=None, new_entropy=None):
+        """
+        Compute KL divergence between old and new policies.
+        For discrete actions, uses KL(old || new) = sum(old_prob * log(old_prob / new_prob))
+        For continuous actions, uses analytical formula for Normal distributions.
+        """
+        if old_entropy is not None and new_entropy is not None:
+            # For continuous case with entropy available
+            # KL(old || new) ≈ (old_entropy - new_entropy) + (new_log_prob - old_log_prob)
+            kl_div = (old_entropy - new_entropy) + (new_log_probs - old_log_probs)
+        else:
+            # Approximation: KL ≈ (new_log_prob - old_log_prob)
+            # This is a common approximation used in many PPO implementations
+            kl_div = new_log_probs - old_log_probs
+        
+        return kl_div
+
     @abstractmethod
     def update(self, next_state=None):
         """Update the policy using PPO algorithm."""
@@ -146,6 +171,9 @@ class BasePPOAgent(ABC):
                 'clip_ratio': self.clip_ratio,
                 'value_coef': self.value_coef,
                 'entropy_coef': self.entropy_coef,
+                'kl_coef': self.kl_coef,
+                'target_kl': self.target_kl,
+                'adaptive_kl': self.adaptive_kl,
                 'max_grad_norm': self.max_grad_norm,
                 'batch_size': self.batch_size,
                 'epochs': self.epochs,
@@ -196,6 +224,9 @@ class BasePPOAgent(ABC):
                 clip_ratio=ENV_CONFIG.get('clip_ratio', 0.2) if 'clip_ratio' in ENV_CONFIG else metadata.get('clip_ratio', 0.2),
                 value_coef=ENV_CONFIG.get('value_coef', 0.5) if 'value_coef' in ENV_CONFIG else metadata.get('value_coef', 0.5),
                 entropy_coef=ENV_CONFIG.get('entropy_coef', 0.01) if 'entropy_coef' in ENV_CONFIG else metadata.get('entropy_coef', 0.01),
+                kl_coef=ENV_CONFIG.get('kl_coef', 0.0) if 'kl_coef' in ENV_CONFIG else metadata.get('kl_coef', 0.0),
+                target_kl=ENV_CONFIG.get('target_kl', 0.01) if 'target_kl' in ENV_CONFIG else metadata.get('target_kl', 0.01),
+                adaptive_kl=ENV_CONFIG.get('adaptive_kl', True) if 'adaptive_kl' in ENV_CONFIG else metadata.get('adaptive_kl', True),
                 max_grad_norm=ENV_CONFIG.get('max_grad_norm', 0.5) if 'max_grad_norm' in ENV_CONFIG else metadata.get('max_grad_norm', 0.5),
                 batch_size=ENV_CONFIG.get('batch_size', 64) if 'batch_size' in ENV_CONFIG else metadata.get('batch_size', 64),
                 epochs=ENV_CONFIG.get('epochs', 10) if 'epochs' in ENV_CONFIG else metadata.get('epochs', 10),
@@ -216,6 +247,9 @@ class BasePPOAgent(ABC):
                 clip_ratio=ENV_CONFIG.get('clip_ratio', 0.2) if 'clip_ratio' in ENV_CONFIG else metadata.get('clip_ratio', 0.2),
                 value_coef=ENV_CONFIG.get('value_coef', 0.5) if 'value_coef' in ENV_CONFIG else metadata.get('value_coef', 0.5),
                 entropy_coef=ENV_CONFIG.get('entropy_coef', 0.01) if 'entropy_coef' in ENV_CONFIG else metadata.get('entropy_coef', 0.01),
+                kl_coef=ENV_CONFIG.get('kl_coef', 0.0) if 'kl_coef' in ENV_CONFIG else metadata.get('kl_coef', 0.0),
+                target_kl=ENV_CONFIG.get('target_kl', 0.01) if 'target_kl' in ENV_CONFIG else metadata.get('target_kl', 0.01),
+                adaptive_kl=ENV_CONFIG.get('adaptive_kl', True) if 'adaptive_kl' in ENV_CONFIG else metadata.get('adaptive_kl', True),
                 max_grad_norm=ENV_CONFIG.get('max_grad_norm', 0.5) if 'max_grad_norm' in ENV_CONFIG else metadata.get('max_grad_norm', 0.5),
                 batch_size=ENV_CONFIG.get('batch_size', 64) if 'batch_size' in ENV_CONFIG else metadata.get('batch_size', 64),
                 epochs=ENV_CONFIG.get('epochs', 10) if 'epochs' in ENV_CONFIG else metadata.get('epochs', 10),
@@ -419,9 +453,17 @@ class DiscretePPOAgent(BasePPOAgent):
         self.network.update_obs_rms(states)
 
         # Training loop
+        epoch_kl_divs = []
+        early_stop = False
+        
         for epoch in range(self.epochs):
+            if early_stop:
+                break
+                
             # Create mini-batches
             indices = torch.randperm(len(states), device=self.device)
+            
+            batch_kl_divs = []
             
             for start in range(0, len(states), self.batch_size):
                 end = start + self.batch_size
@@ -439,6 +481,16 @@ class DiscretePPOAgent(BasePPOAgent):
                 # Forward pass
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
+                # Compute KL divergence
+                kl_div = self.compute_kl_divergence(batch_old_log_probs, new_log_probs.squeeze(-1))
+                mean_kl_div = kl_div.mean()
+                batch_kl_divs.append(mean_kl_div.item())
+                
+                # Early stopping based on KL divergence
+                if self.adaptive_kl and mean_kl_div > 1.5 * self.target_kl:
+                    early_stop = True
+                    break
+                
                 # Compute policy loss with clipped log probability ratio
                 log_ratio = new_log_probs.squeeze(-1) - batch_old_log_probs
                 ratio = torch.exp(log_ratio)
@@ -452,8 +504,11 @@ class DiscretePPOAgent(BasePPOAgent):
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()
                 
+                # Compute KL penalty loss
+                kl_loss = self.kl_coef * mean_kl_div
+                
                 # Total loss
-                total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
+                total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss + kl_loss
                 
                 # Backward pass
                 self.optimizer.zero_grad()
@@ -465,7 +520,22 @@ class DiscretePPOAgent(BasePPOAgent):
                 self.training_stats['policy_loss'].append(policy_loss.item())
                 self.training_stats['value_loss'].append(value_loss.item())
                 self.training_stats['entropy_loss'].append(entropy_loss.item())
+                self.training_stats['kl_loss'].append(kl_loss.item())
+                self.training_stats['kl_divergence'].append(mean_kl_div.item())
                 self.training_stats['total_loss'].append(total_loss.item())
+            
+            # Update KL coefficient adaptively
+            if batch_kl_divs and self.adaptive_kl:
+                epoch_kl = np.mean(batch_kl_divs)
+                epoch_kl_divs.append(epoch_kl)
+                
+                if epoch_kl < self.target_kl / 1.5:
+                    self.kl_coef *= 0.5
+                elif epoch_kl > self.target_kl * 1.5:
+                    self.kl_coef *= 2.0
+                
+                # Clamp KL coefficient to reasonable bounds
+                self.kl_coef = np.clip(self.kl_coef, 1e-4, 1.0)
         
         # Clear memory after update
         self.memory.clear()
@@ -538,9 +608,17 @@ class ContinuousPPOAgent(BasePPOAgent):
         self.network.update_obs_rms(states)
 
         # Training loop
+        epoch_kl_divs = []
+        early_stop = False
+        
         for epoch in range(self.epochs):
+            if early_stop:
+                break
+                
             # Create mini-batches
             indices = torch.randperm(len(states), device=self.device)
+            
+            batch_kl_divs = []
             
             for start in range(0, len(states), self.batch_size):
                 end = start + self.batch_size
@@ -558,6 +636,16 @@ class ContinuousPPOAgent(BasePPOAgent):
                 # Forward pass
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
+                # Compute KL divergence
+                kl_div = self.compute_kl_divergence(batch_old_log_probs, new_log_probs.squeeze(-1))
+                mean_kl_div = kl_div.mean()
+                batch_kl_divs.append(mean_kl_div.item())
+                
+                # Early stopping based on KL divergence
+                if self.adaptive_kl and mean_kl_div > 1.5 * self.target_kl:
+                    early_stop = True
+                    break
+                
                 # Compute policy loss with clipped log probability ratio
                 log_ratio = new_log_probs.squeeze(-1) - batch_old_log_probs
                 ratio = torch.exp(log_ratio)
@@ -571,8 +659,11 @@ class ContinuousPPOAgent(BasePPOAgent):
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()
                 
+                # Compute KL penalty loss
+                kl_loss = self.kl_coef * mean_kl_div
+                
                 # Total loss
-                total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
+                total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss + kl_loss
 
                 # Backward pass
                 self.optimizer.zero_grad()
@@ -584,7 +675,22 @@ class ContinuousPPOAgent(BasePPOAgent):
                 self.training_stats['policy_loss'].append(policy_loss.item())
                 self.training_stats['value_loss'].append(value_loss.item())
                 self.training_stats['entropy_loss'].append(entropy_loss.item())
+                self.training_stats['kl_loss'].append(kl_loss.item())
+                self.training_stats['kl_divergence'].append(mean_kl_div.item())
                 self.training_stats['total_loss'].append(total_loss.item())
+            
+            # Update KL coefficient adaptively
+            if batch_kl_divs and self.adaptive_kl:
+                epoch_kl = np.mean(batch_kl_divs)
+                epoch_kl_divs.append(epoch_kl)
+                
+                if epoch_kl < self.target_kl / 1.5:
+                    self.kl_coef *= 0.5
+                elif epoch_kl > self.target_kl * 1.5:
+                    self.kl_coef *= 2.0
+                
+                # Clamp KL coefficient to reasonable bounds
+                self.kl_coef = np.clip(self.kl_coef, 1e-4, 1.0)
         
         # Clear memory after update
         self.memory.clear()
