@@ -57,12 +57,12 @@ class BaseActorCritic(nn.Module, ABC):
         return self.rew_rs.normalize(reward)
 
     @abstractmethod
-    def get_action_and_value(self, state, action=None, deterministic=False):
+    def get_action_and_value(self, state, action=None, deterministic=False) -> tuple:
         """Get action, log probability, entropy, and value."""
         pass
 
     @abstractmethod
-    def evaluate(self, state, action):
+    def evaluate(self, state, action) -> tuple:
         """Evaluate actions for given states."""
         pass
 

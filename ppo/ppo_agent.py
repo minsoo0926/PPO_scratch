@@ -550,8 +550,8 @@ class ContinuousPPOAgent(BasePPOAgent):
 # Legacy class for backward compatibility
 class PPOAgent:
     """Factory class that creates appropriate PPO agent based on action space."""
-    
-    def __new__(cls, state_dim, action_dim, continuous_space=None, action_low=-1.0, action_high=1.0, **kwargs):
+
+    def __new__(cls, state_dim, action_dim, continuous_space=None, action_low=np.array([-1.0]), action_high=np.array([1.0]), **kwargs):
         if continuous_space is not None:
             # Extract bounds from continuous_space if provided
             if hasattr(continuous_space, 'low') and hasattr(continuous_space, 'high'):
