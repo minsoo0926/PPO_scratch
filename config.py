@@ -13,13 +13,13 @@ ENV_CONFIG = {
     "lam": 0.95,
     "clip_ratio": 0.2,
     "value_coef": 0.5,
-    "entropy_coef": 0.05,
+    "entropy_coef": 0.02,
     "max_grad_norm": 0.5,
     "buffer_size": 2048,
     "batch_size": 64,
-    "epochs": 8,
+    "epochs": 10,
     "hidden_dim": 256,
-    "n_envs": 16,
+    "n_envs": 8,
 }
 
 # torch.autograd.set_detect_anomaly(True)

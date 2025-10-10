@@ -122,6 +122,8 @@ class DiscreteActorCritic(BaseActorCritic):
 
 class ContinuousActorCritic(BaseActorCritic):
     """Actor-Critic network for continuous action spaces with tanh squashing."""
+    action_scale: torch.Tensor
+    action_bias: torch.Tensor
 
     def __init__(self, state_dim, action_dim, hidden_dim=64, action_low=np.array([-1.0]), action_high=np.array([1.0])):
         super().__init__(state_dim, action_dim, hidden_dim)
