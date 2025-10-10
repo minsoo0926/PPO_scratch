@@ -87,7 +87,7 @@ class BasePPOAgent(ABC):
         with torch.no_grad():
             shape = rewards.shape
             rewards = rewards.view(-1)
-            rewards = self.network.forward_rew_rms(rewards)
+            rewards = self.network.forward_rew_rs(rewards)
             rewards = rewards.view(shape)
         return rewards
 
@@ -373,7 +373,7 @@ class DiscretePPOAgent(BasePPOAgent):
         values = values.view(-1)
 
         # Update observation normalization
-        self.network.update_rms(states)
+        self.network.update_obs_rms(states)
 
         # Training loop
         for epoch in range(self.epochs):
@@ -492,7 +492,7 @@ class ContinuousPPOAgent(BasePPOAgent):
         values = values.view(-1)
 
         # Update observation normalization
-        self.network.update_rms(states)
+        self.network.update_obs_rms(states)
 
         # Training loop
         for epoch in range(self.epochs):

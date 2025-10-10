@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch.distributions import Categorical, Normal
 import numpy as np
 from abc import ABC, abstractmethod
-from ppo.normalizer import RunningMeanStd
+from ppo.normalizer import RunningMeanStd, RunningStd
 
 LOG_STD_MAX = 2.0
 LOG_STD_MIN = -5.0
@@ -28,7 +28,7 @@ class BaseActorCritic(nn.Module, ABC):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.obs_rms = RunningMeanStd(shape=(state_dim,))
-        self.rew_rms = RunningMeanStd(shape=(1,))
+        self.rew_rs = RunningStd(shape=(1,))
         self.obs_norm = True
 
         # Shared layers
@@ -47,14 +47,14 @@ class BaseActorCritic(nn.Module, ABC):
         shared_features = self.shared_layers(state)
         return self.critic(shared_features)
     
-    def update_rms(self, state):
+    def update_obs_rms(self, state):
         """Update observation running mean and std."""
         self.obs_rms.update(state)
 
-    def forward_rew_rms(self, reward):
+    def forward_rew_rs(self, reward):
         """Update reward running mean and std."""
-        self.rew_rms.update(reward)
-        return self.rew_rms.normalize(reward)
+        self.rew_rs.update(reward)
+        return self.rew_rs.normalize(reward)
 
     @abstractmethod
     def get_action_and_value(self, state, action=None, deterministic=False):
