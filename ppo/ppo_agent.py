@@ -119,21 +119,8 @@ class BasePPOAgent(ABC):
         advantages = (advantages - advantages.mean(-1, keepdim=True)) / (advantages.std(-1, keepdim=True) + 1e-8)
         return advantages, returns
 
-    def compute_kl_divergence(self, old_log_probs, new_log_probs, old_entropy=None, new_entropy=None):
-        """
-        Compute KL divergence between old and new policies.
-        For discrete actions, uses KL(old || new) = sum(old_prob * log(old_prob / new_prob))
-        For continuous actions, uses analytical formula for Normal distributions.
-        """
-        if old_entropy is not None and new_entropy is not None:
-            # For continuous case with entropy available
-            # KL(old || new) ≈ (old_entropy - new_entropy) + (new_log_prob - old_log_prob)
-            kl_div = (old_entropy - new_entropy) + (new_log_probs - old_log_probs)
-        else:
-            # Approximation: KL ≈ (new_log_prob - old_log_prob)
-            # This is a common approximation used in many PPO implementations
-            kl_div = new_log_probs - old_log_probs
-        
+    def compute_kl_divergence(self, old_log_probs, new_log_probs):
+        kl_div = old_log_probs - new_log_probs
         return kl_div
 
     @abstractmethod
