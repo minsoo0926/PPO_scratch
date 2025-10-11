@@ -11,6 +11,13 @@ import matplotlib.pyplot as plt
 from ppo import create_ppo_agent, print_action_space_info
 from config import ENV_CONFIG
 
+if ENV_CONFIG['id'].startswith("ALE/"):
+    # Import ALE for Atari environments
+    import ale_py
+    gym.register_envs(ale_py)
+    ale = True
+else:
+    ale = False
 
 def create_env_model_dir(env_id):
     """
@@ -115,7 +122,14 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
     print(f"Creating vectorized environment with {n_envs} parallel environments")
     # Create multiple environments for vectorization
-    env = gym.make_vec(env_config['id'], render_mode=None, num_envs=n_envs)
+    if ale:
+        # For ALE environments, disable rendering in vectorized envs
+        from functools import partial
+        env = gym.vector.SyncVectorEnv([
+            lambda: gym.make(env_config['id'], obs_type='ram') for _ in range(n_envs)
+        ])
+    else:
+        env = gym.make_vec(env_config['id'], render_mode=None, num_envs=n_envs)
     env = VectorNumpyToTorch(env)  # Convert observations to PyTorch tensors
 
     # Print action space information
@@ -373,7 +387,11 @@ def test_agent(env_config=ENV_CONFIG, model_path=None, num_episodes=10):
     test_env_config = env_config.copy()
     test_env_config['n_envs'] = 1  # Force single environment for testing
 
-    env: gym.Env = gym.make(test_env_config['id'], render_mode="human")
+    if ale:
+        # For ALE environments, disable rendering in vectorized envs
+        env: gym.Env = gym.make(test_env_config['id'], obs_type='ram', render_mode="human")
+    else:
+        env: gym.Env = gym.make(test_env_config['id'], render_mode="human")
     env = SingleNumpyToTorch(env)  # Convert observations to PyTorch tensors
 
     # Set device

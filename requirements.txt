@@ -6,3 +6,4 @@ swig
 gymnasium[all]
 mujoco
 stable-baselines3
+ale-py
