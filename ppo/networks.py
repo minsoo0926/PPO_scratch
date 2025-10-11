@@ -34,8 +34,8 @@ class BaseActorCritic(nn.Module, ABC):
         # Shared layers
         self.shared_layers = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim),
+            # nn.Tanh(),
+            # nn.Linear(hidden_dim, hidden_dim),
             nn.Tanh()
         )
         
