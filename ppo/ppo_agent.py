@@ -100,6 +100,7 @@ class BasePPOAgent(ABC):
             rewards = rewards.view(shape)
         return rewards
 
+    @torch.no_grad()
     def compute_advantages(self, rewards, values, dones, next_value):
         """Compute GAE (Generalized Advantage Estimation) advantages."""
         advantages = torch.zeros_like(rewards)
@@ -119,21 +120,9 @@ class BasePPOAgent(ABC):
         advantages = (advantages - advantages.mean(-1, keepdim=True)) / (advantages.std(-1, keepdim=True) + 1e-8)
         return advantages, returns
 
-    def compute_kl_divergence(self, old_log_probs, new_log_probs, old_entropy=None, new_entropy=None):
-        """
-        Compute KL divergence between old and new policies.
-        For discrete actions, uses KL(old || new) = sum(old_prob * log(old_prob / new_prob))
-        For continuous actions, uses analytical formula for Normal distributions.
-        """
-        if old_entropy is not None and new_entropy is not None:
-            # For continuous case with entropy available
-            # KL(old || new) ≈ (old_entropy - new_entropy) + (new_log_prob - old_log_prob)
-            kl_div = (old_entropy - new_entropy) + (new_log_probs - old_log_probs)
-        else:
-            # Approximation: KL ≈ (new_log_prob - old_log_prob)
-            # This is a common approximation used in many PPO implementations
-            kl_div = new_log_probs - old_log_probs
-        
+    def compute_kl_divergence(self, old_log_probs, new_log_probs):
+        log_ratio = new_log_probs - old_log_probs
+        kl_div = (torch.exp(log_ratio) - 1 - log_ratio).mean().clamp(min=0.0)
         return kl_div
 
     @abstractmethod
@@ -483,11 +472,10 @@ class DiscretePPOAgent(BasePPOAgent):
                 
                 # Compute KL divergence
                 kl_div = self.compute_kl_divergence(batch_old_log_probs, new_log_probs.squeeze(-1))
-                mean_kl_div = kl_div.mean()
-                batch_kl_divs.append(mean_kl_div.item())
+                batch_kl_divs.append(kl_div.item())
                 
                 # Early stopping based on KL divergence
-                if self.adaptive_kl and mean_kl_div > 1.5 * self.target_kl:
+                if self.adaptive_kl and kl_div > 1.5 * self.target_kl:
                     early_stop = True
                     break
                 
@@ -505,7 +493,7 @@ class DiscretePPOAgent(BasePPOAgent):
                 entropy_loss = -entropy.mean()
                 
                 # Compute KL penalty loss
-                kl_loss = self.kl_coef * mean_kl_div
+                kl_loss = self.kl_coef * kl_div
                 
                 # Total loss
                 total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss + kl_loss
@@ -521,7 +509,7 @@ class DiscretePPOAgent(BasePPOAgent):
                 self.training_stats['value_loss'].append(value_loss.item())
                 self.training_stats['entropy_loss'].append(entropy_loss.item())
                 self.training_stats['kl_loss'].append(kl_loss.item())
-                self.training_stats['kl_divergence'].append(mean_kl_div.item())
+                self.training_stats['kl_divergence'].append(kl_div.item())
                 self.training_stats['total_loss'].append(total_loss.item())
             
             # Update KL coefficient adaptively
@@ -638,11 +626,10 @@ class ContinuousPPOAgent(BasePPOAgent):
                 
                 # Compute KL divergence
                 kl_div = self.compute_kl_divergence(batch_old_log_probs, new_log_probs.squeeze(-1))
-                mean_kl_div = kl_div.mean()
-                batch_kl_divs.append(mean_kl_div.item())
+                batch_kl_divs.append(kl_div.item())
                 
                 # Early stopping based on KL divergence
-                if self.adaptive_kl and mean_kl_div > 1.5 * self.target_kl:
+                if self.adaptive_kl and kl_div > 1.5 * self.target_kl:
                     early_stop = True
                     break
                 
@@ -660,7 +647,7 @@ class ContinuousPPOAgent(BasePPOAgent):
                 entropy_loss = -entropy.mean()
                 
                 # Compute KL penalty loss
-                kl_loss = self.kl_coef * mean_kl_div
+                kl_loss = self.kl_coef * kl_div
                 
                 # Total loss
                 total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss + kl_loss
@@ -676,7 +663,7 @@ class ContinuousPPOAgent(BasePPOAgent):
                 self.training_stats['value_loss'].append(value_loss.item())
                 self.training_stats['entropy_loss'].append(entropy_loss.item())
                 self.training_stats['kl_loss'].append(kl_loss.item())
-                self.training_stats['kl_divergence'].append(mean_kl_div.item())
+                self.training_stats['kl_divergence'].append(kl_div.item())
                 self.training_stats['total_loss'].append(total_loss.item())
             
             # Update KL coefficient adaptively

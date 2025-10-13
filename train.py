@@ -11,6 +11,13 @@ import matplotlib.pyplot as plt
 from ppo import create_ppo_agent, print_action_space_info
 from config import ENV_CONFIG
 
+if ENV_CONFIG['id'].startswith("ALE/"):
+    # Import ALE for Atari environments
+    import ale_py
+    gym.register_envs(ale_py)
+    ale = True
+else:
+    ale = False
 
 def create_env_model_dir(env_id):
     """
@@ -115,7 +122,14 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
     print(f"Creating vectorized environment with {n_envs} parallel environments")
     # Create multiple environments for vectorization
-    env = gym.make_vec(env_config['id'], render_mode=None, num_envs=n_envs)
+    if ale:
+        # For ALE environments, disable rendering in vectorized envs
+        from functools import partial
+        env = gym.vector.SyncVectorEnv([
+            lambda: gym.make(env_config['id'], obs_type='ram') for _ in range(n_envs)
+        ])
+    else:
+        env = gym.make_vec(env_config['id'], render_mode=None, num_envs=n_envs)
     env = VectorNumpyToTorch(env)  # Convert observations to PyTorch tensors
 
     # Print action space information
@@ -256,9 +270,15 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
             if episode // 100 != prior_logging // 100:
                 avg_reward = np.mean(episode_rewards[-100:])
                 avg_length = np.mean(episode_lengths[-100:])
+                training_stats = agent.training_stats
                 print(f"Episode {episode}, Timestep {timestep}")
                 print(f"Average Reward (last 100): {avg_reward:.2f}")
                 print(f"Average Length (last 100): {avg_length:.2f}")
+                if training_stats:
+                    print("Training Stats:")
+                    for key, value in training_stats.items():
+                        if value:
+                            print(f"  {key}: {value[-1]:.4f}")
                 print("-" * 30)
                 prior_logging = episode
 
@@ -284,30 +304,77 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
     return agent, episode_rewards, episode_lengths
 
 
-def plot_training_results(episode_rewards, episode_lengths, window=100):
-    """Plot training results."""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-
+def plot_training_results(episode_rewards, episode_lengths, agent=None, window=100):
+    """Plot training results including all training statistics."""
+    # Determine the number of subplots needed
+    num_stats = 0
+    training_stats = {}
+    
+    if agent and hasattr(agent, 'training_stats') and agent.training_stats:
+        training_stats = agent.training_stats
+        num_stats = len(training_stats)
+    
+    # Calculate total number of plots (rewards + lengths + training stats)
+    total_plots = 2 + num_stats
+    
+    # Determine grid layout
+    if total_plots <= 2:
+        rows, cols = 1, 2
+    elif total_plots <= 4:
+        rows, cols = 2, 2
+    elif total_plots <= 6:
+        rows, cols = 2, 3
+    else:
+        rows, cols = 3, (total_plots + 2) // 3
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 5, rows * 3))
+    
+    # Flatten axes for easier indexing if multiple subplots
+    if total_plots > 1:
+        axes = axes.flatten() if hasattr(axes, 'flatten') else [axes]
+    else:
+        axes = [axes]
+    
+    plot_idx = 0
+    
     # Plot episode rewards
-    ax1.plot(episode_rewards, alpha=0.3, color='blue')
+    axes[plot_idx].plot(episode_rewards, alpha=0.3, color='blue')
     if len(episode_rewards) >= window:
         moving_avg = np.convolve(episode_rewards, np.ones(window)/window, mode='valid')
-        ax1.plot(range(window-1, len(episode_rewards)), moving_avg, color='red', linewidth=2)
-    ax1.set_xlabel('Episode')
-    ax1.set_ylabel('Episode Reward')
-    ax1.set_title('Training Progress - Rewards')
-    ax1.grid(True)
+        axes[plot_idx].plot(range(window-1, len(episode_rewards)), moving_avg, color='red', linewidth=2)
+    axes[plot_idx].set_xlabel('Episode')
+    axes[plot_idx].set_ylabel('Episode Reward')
+    axes[plot_idx].set_title('Training Progress - Rewards')
+    axes[plot_idx].grid(True)
+    plot_idx += 1
 
     # Plot episode lengths
-    ax2.plot(episode_lengths, alpha=0.3, color='green')
+    axes[plot_idx].plot(episode_lengths, alpha=0.3, color='green')
     if len(episode_lengths) >= window:
         moving_avg = np.convolve(episode_lengths, np.ones(window)/window, mode='valid')
-        ax2.plot(range(window-1, len(episode_lengths)), moving_avg, color='red', linewidth=2)
-    ax2.set_xlabel('Episode')
-    ax2.set_ylabel('Episode Length')
-    ax2.set_title('Training Progress - Episode Length')
-    ax2.grid(True)
-
+        axes[plot_idx].plot(range(window-1, len(episode_lengths)), moving_avg, color='red', linewidth=2)
+    axes[plot_idx].set_xlabel('Episode')
+    axes[plot_idx].set_ylabel('Episode Length')
+    axes[plot_idx].set_title('Training Progress - Episode Length')
+    axes[plot_idx].grid(True)
+    plot_idx += 1
+    
+    # Plot training statistics
+    colors = ['purple', 'orange', 'brown', 'pink', 'gray', 'olive']
+    for i, (stat_name, stat_values) in enumerate(training_stats.items()):
+        if plot_idx < len(axes):
+            color = colors[i % len(colors)]
+            axes[plot_idx].plot(stat_values, color=color, linewidth=2)
+            axes[plot_idx].set_xlabel('Training Update')
+            axes[plot_idx].set_ylabel(stat_name.replace('_', ' ').title())
+            axes[plot_idx].set_title(f'Training Stats - {stat_name.replace("_", " ").title()}')
+            axes[plot_idx].grid(True)
+            plot_idx += 1
+    
+    # Hide unused subplots
+    for i in range(plot_idx, len(axes)):
+        axes[i].set_visible(False)
+    
     plt.tight_layout()
     plt.savefig('training_results.png', dpi=150, bbox_inches='tight')
     plt.show()
@@ -320,7 +387,11 @@ def test_agent(env_config=ENV_CONFIG, model_path=None, num_episodes=10):
     test_env_config = env_config.copy()
     test_env_config['n_envs'] = 1  # Force single environment for testing
 
-    env: gym.Env = gym.make(test_env_config['id'], render_mode="human")
+    if ale:
+        # For ALE environments, disable rendering in vectorized envs
+        env: gym.Env = gym.make(test_env_config['id'], obs_type='ram', render_mode="human")
+    else:
+        env: gym.Env = gym.make(test_env_config['id'], render_mode="human")
     env = SingleNumpyToTorch(env)  # Convert observations to PyTorch tensors
 
     # Set device
@@ -499,7 +570,7 @@ if __name__ == "__main__":
         if result is not None:
             agent, rewards, lengths = result
             # Plot results
-            plot_training_results(rewards, lengths)
+            plot_training_results(rewards, lengths, agent)
         else:
             print("Training failed - check error messages above")
 

@@ -34,8 +34,8 @@ class BaseActorCritic(nn.Module, ABC):
         # Shared layers
         self.shared_layers = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim),
+            # nn.Tanh(),
+            # nn.Linear(hidden_dim, hidden_dim),
             nn.Tanh()
         )
         
@@ -90,6 +90,7 @@ class DiscreteActorCritic(BaseActorCritic):
         state_value = self.critic(shared_features)
         return action_logits, state_value
 
+    @torch.no_grad()
     def get_action_and_value(self, state, action=None, deterministic=False):
         """Get action, log probability, entropy, and value for discrete actions."""
         action_logits, value = self.forward(state)
@@ -165,7 +166,8 @@ class ContinuousActorCritic(BaseActorCritic):
         state_value = self.critic(shared_features)
         log_std = torch.clamp(self.log_std, LOG_STD_MIN, LOG_STD_MAX)
         return raw_action_mean, state_value, log_std
-
+    
+    @torch.no_grad()
     def get_action_and_value(self, state, action=None, deterministic=False):
         """Get action, log probability, entropy, and value for continuous actions."""
         raw_action_mean, value, log_std = self.forward(state)
