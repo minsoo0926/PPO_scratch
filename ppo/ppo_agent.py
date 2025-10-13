@@ -115,9 +115,11 @@ class BasePPOAgent(ABC):
             delta = rewards[:, t:t+1] + self.gamma * next_val * next_non_terminal - values[:, t:t+1]
             gae = delta + self.gamma * self.lam * next_non_terminal * gae
             advantages[:, t:t+1] = gae
-            returns[:, t:t+1] = advantages[:, t:t+1] + values[:, t:t+1]
 
         advantages = (advantages - advantages.mean(-1, keepdim=True)) / (advantages.std(-1, keepdim=True) + 1e-8)
+        for t in range(batch_len):
+            returns[:, t:t+1] = advantages[:, t:t+1] + values[:, t:t+1]
+        
         return advantages, returns
 
     def compute_kl_divergence(self, old_log_probs, new_log_probs):
@@ -438,9 +440,6 @@ class DiscretePPOAgent(BasePPOAgent):
         returns = returns.view(-1)
         values = values.view(-1)
 
-        # Update observation normalization
-        self.network.update_obs_rms(states)
-
         # Training loop
         epoch_kl_divs = []
         early_stop = False
@@ -591,9 +590,6 @@ class ContinuousPPOAgent(BasePPOAgent):
         advantages = advantages.view(-1)
         returns = returns.view(-1)
         values = values.view(-1)
-
-        # Update observation normalization
-        self.network.update_obs_rms(states)
 
         # Training loop
         epoch_kl_divs = []

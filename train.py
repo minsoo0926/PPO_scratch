@@ -219,6 +219,7 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
 
         while not np.all(dones) and timestep < total_timesteps:
             # Get actions for all environments at once (batch processing)
+            agent.network.update_obs_rms(states)
             actions, log_probs, values = agent.get_action(states)
 
             # Take step in all environments
