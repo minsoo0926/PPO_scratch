@@ -147,6 +147,7 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
         gamma=env_config.get('gamma', 0.99),
         lam=env_config.get('lam', 0.95),
         clip_ratio=env_config.get('clip_ratio', 0.2),
+        clip_vf=env_config.get('clip_vf', 0.2),
         value_coef=env_config.get('value_coef', 0.5),
         entropy_coef=env_config.get('entropy_coef', 0.01),
         max_grad_norm=env_config.get('max_grad_norm', 0.5),

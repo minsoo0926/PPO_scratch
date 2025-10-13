@@ -16,6 +16,7 @@ ENV_CONFIG = {
     "gamma": 0.99,
     "lam": 0.95,
     "clip_ratio": 0.2,
+    "clip_vf": 0,
     "value_coef": 0.5,
     "entropy_coef": 0.01,
     "max_grad_norm": 0.5,
