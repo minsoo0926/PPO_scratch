@@ -1,7 +1,7 @@
 import torch
 
 ENV_CONFIG = {
-    "id": "BipedalWalker-v3",
+    # "id": "BipedalWalker-v3",
     # "id": "Humanoid-v5", 
     # "id": "MountainCarContinuous-v0",
     # "id": "Pendulum-v1",
@@ -9,13 +9,15 @@ ENV_CONFIG = {
     # "id": "Ant-v5",
     # "id": "HalfCheetah-v5",
     # "id": "HumanoidStandup-v5",
+    # "id": "CartPole-v1",
+    "id": "Hopper-v5",
     # "id": "ALE/Pong-v5",
     "lr": 3e-4,
     "gamma": 0.99,
     "lam": 0.95,
     "clip_ratio": 0.2,
     "value_coef": 0.5,
-    "entropy_coef": 0.02,
+    "entropy_coef": 0.01,
     "max_grad_norm": 0.5,
     "buffer_size": 2048,
     "batch_size": 64,
