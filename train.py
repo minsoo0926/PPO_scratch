@@ -327,7 +327,7 @@ def plot_training_results(episode_rewards, episode_lengths, agent=None, window=1
     else:
         rows, cols = 3, (total_plots + 2) // 3
     
-    fig, axes = plt.subplots(rows, cols, figsize=(cols * 3, rows * 2))
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 5, rows * 3))
     
     # Flatten axes for easier indexing if multiple subplots
     if total_plots > 1:

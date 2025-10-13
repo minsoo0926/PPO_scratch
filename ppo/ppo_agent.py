@@ -100,6 +100,7 @@ class BasePPOAgent(ABC):
             rewards = rewards.view(shape)
         return rewards
 
+    @torch.no_grad()
     def compute_advantages(self, rewards, values, dones, next_value):
         """Compute GAE (Generalized Advantage Estimation) advantages."""
         advantages = torch.zeros_like(rewards)
