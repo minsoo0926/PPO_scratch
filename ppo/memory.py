@@ -74,7 +74,7 @@ class DiscreteMemory(BaseMemory):
         self.dones[idx_env, self.ptr] = bool(done)
 
         self.ptr = (self.ptr + 1) % self.buffer_length if idx_env == self.n_envs - 1 else self.ptr
-        self.size = min(self.size + self.n_envs, self.buffer_length)
+        self.size = min(self.size + self.n_envs, self.buffer_length * self.n_envs)
 
     def get(self):
         """Get all stored discrete experiences."""
@@ -122,7 +122,7 @@ class ContinuousMemory(BaseMemory):
         self.dones[idx_env, self.ptr] = bool(done)
 
         self.ptr = (self.ptr + 1) % self.buffer_length if idx_env == self.n_envs - 1 else self.ptr
-        self.size = min(self.size + self.n_envs, self.buffer_length)
+        self.size = min(self.size + self.n_envs, self.buffer_length * self.n_envs)
 
     def get(self):
         """Get all stored continuous experiences."""
