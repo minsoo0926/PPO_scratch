@@ -90,14 +90,14 @@ class BasePPOAgent(ABC):
         """Store experience in memory buffer."""
         self.memory.store(idx_env, state, action, reward, value, log_prob, done)
 
+    @torch.no_grad()
     def normalize_rewards(self, rewards):
         """Normalize rewards across the batch."""
-        with torch.no_grad():
-            shape = rewards.shape
-            rewards = rewards.to(self.device)
-            rewards = rewards.view(-1)
-            rewards = self.network.forward_rew_rs(rewards)
-            rewards = rewards.view(shape)
+        shape = rewards.shape
+        rewards = rewards.to(self.device)
+        rewards = rewards.view(-1)
+        rewards = self.network.forward_rew_rs(rewards)
+        rewards = rewards.view(shape)
         return rewards
 
     @torch.no_grad()
