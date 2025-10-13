@@ -116,7 +116,8 @@ class BasePPOAgent(ABC):
             next_val = next_value if t == batch_len - 1 else values[:, t + 1:t + 2]
             next_non_terminal = 1.0 - dones[:, t:t+1].float()
             delta = rewards[:, t:t+1] + self.gamma * next_val * next_non_terminal - values[:, t:t+1]
-            advantages[:, t:t+1] = delta + self.gamma * self.lam * next_non_terminal * gae
+            gae = delta + self.gamma * self.lam * next_non_terminal * gae
+            advantages[:, t:t+1] = gae
         returns = advantages + values
         return advantages, returns
 
