@@ -155,6 +155,7 @@ class ContinuousActorCritic(BaseActorCritic):
         )
         # Learnable log standard deviation parameter
         self.log_std = nn.Parameter(torch.zeros(action_dim))
+        self.epsilon = 1e-6  # For numerical stability in log calculations
 
     def forward(self, state):
         """Forward pass through both actor and critic."""
@@ -191,16 +192,13 @@ class ContinuousActorCritic(BaseActorCritic):
             # Then apply inverse tanh (clamp to avoid numerical issues)
             raw_action = torch.atanh(torch.clamp(normalized_action, -0.999, 0.999))
         
-        # Calculate log probability and entropy from raw space
-        log_two = torch.log(torch.tensor(2.0, device=raw_action.device))
-        squash_correction = (2 * (log_two - raw_action - F.softplus(-2 * raw_action))).sum(dim=-1, keepdim=True)
-        log_prob = dist.log_prob(raw_action).sum(dim=-1, keepdim=True) - squash_correction
-        entropy = dist.entropy().sum(dim=-1, keepdim=True)
-        
-        # Apply tanh to constrain to [-1, 1] then scale to actual action bounds
-        assert self.action_scale is not None and self.action_bias is not None
         squashed_action = torch.tanh(raw_action)
         final_action = squashed_action * self.action_scale + self.action_bias
+
+        # Calculate log probability and entropy from raw space
+        log_prob = dist.log_prob(raw_action).sum(dim=-1, keepdim=True)
+        log_prob -= torch.log(1 - squashed_action**2 + self.epsilon).sum(dim=-1, keepdim=True)
+        entropy = dist.entropy().sum(dim=-1, keepdim=True)
         
         return final_action, log_prob, entropy, value
 
@@ -218,11 +216,10 @@ class ContinuousActorCritic(BaseActorCritic):
         normalized_action = (action - self.action_bias) / self.action_scale
         # Then apply inverse tanh (clamp to avoid numerical issues)
         raw_action = torch.atanh(torch.clamp(normalized_action, -0.999, 0.999))
-        
+
         # Calculate log probability and entropy in raw space with tanh correction
-        log_two = torch.log(torch.tensor(2.0, device=raw_action.device))
-        squash_correction = (2 * (log_two - raw_action - F.softplus(-2 * raw_action))).sum(dim=-1, keepdim=True)
-        log_prob = dist.log_prob(raw_action).sum(dim=-1, keepdim=True) - squash_correction
+        log_prob = dist.log_prob(raw_action).sum(dim=-1, keepdim=True)
+        log_prob -= torch.log(1 - normalized_action**2 + self.epsilon).sum(dim=-1, keepdim=True)
         entropy = dist.entropy().sum(dim=-1, keepdim=True)
         
         return log_prob, entropy, value
