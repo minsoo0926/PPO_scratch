@@ -3,6 +3,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 from abc import ABC, abstractmethod
 from .networks import DiscreteActorCritic, ContinuousActorCritic, BaseActorCritic
@@ -21,6 +22,7 @@ class BasePPOAgent(ABC):
         gamma=0.99,
         lam=0.95,
         clip_ratio=0.2,
+        clip_vf=0.2,
         value_coef=0.5,
         entropy_coef=0.01,
         kl_coef=0.0,
@@ -40,6 +42,7 @@ class BasePPOAgent(ABC):
         self.gamma = gamma
         self.lam = lam
         self.clip_ratio = clip_ratio
+        self.clip_vf = clip_vf
         self.value_coef = value_coef
         self.entropy_coef = entropy_coef
         self.kl_coef = kl_coef
@@ -111,15 +114,11 @@ class BasePPOAgent(ABC):
 
         for t in reversed(range(batch_len)):
             next_val = next_value if t == batch_len - 1 else values[:, t + 1:t + 2]
-            next_non_terminal = torch.full_like(rewards[:, t:t+1], 1.0) - dones[:, t:t+1].float()
+            next_non_terminal = 1.0 - dones[:, t:t+1].float()
             delta = rewards[:, t:t+1] + self.gamma * next_val * next_non_terminal - values[:, t:t+1]
             gae = delta + self.gamma * self.lam * next_non_terminal * gae
             advantages[:, t:t+1] = gae
-
-        advantages = (advantages - advantages.mean(-1, keepdim=True)) / (advantages.std(-1, keepdim=True) + 1e-8)
-        for t in range(batch_len):
-            returns[:, t:t+1] = advantages[:, t:t+1] + values[:, t:t+1]
-        
+        returns = advantages + values
         return advantages, returns
 
     def compute_kl_divergence(self, old_log_probs, new_log_probs):
@@ -160,6 +159,7 @@ class BasePPOAgent(ABC):
                 'gamma': self.gamma,
                 'lam': self.lam,
                 'clip_ratio': self.clip_ratio,
+                'clip_vf': self.clip_vf,
                 'value_coef': self.value_coef,
                 'entropy_coef': self.entropy_coef,
                 'kl_coef': self.kl_coef,
@@ -213,6 +213,7 @@ class BasePPOAgent(ABC):
                 gamma=ENV_CONFIG.get('gamma', 0.99) if 'gamma' in ENV_CONFIG else metadata.get('gamma', 0.99),
                 lam=ENV_CONFIG.get('lam', 0.95) if 'lam' in ENV_CONFIG else metadata.get('lam', 0.95),
                 clip_ratio=ENV_CONFIG.get('clip_ratio', 0.2) if 'clip_ratio' in ENV_CONFIG else metadata.get('clip_ratio', 0.2),
+                clip_vf=ENV_CONFIG.get('clip_vf', 0.2) if 'clip_vf' in ENV_CONFIG else metadata.get('clip_vf', 0.2),
                 value_coef=ENV_CONFIG.get('value_coef', 0.5) if 'value_coef' in ENV_CONFIG else metadata.get('value_coef', 0.5),
                 entropy_coef=ENV_CONFIG.get('entropy_coef', 0.01) if 'entropy_coef' in ENV_CONFIG else metadata.get('entropy_coef', 0.01),
                 kl_coef=ENV_CONFIG.get('kl_coef', 0.0) if 'kl_coef' in ENV_CONFIG else metadata.get('kl_coef', 0.0),
@@ -236,6 +237,7 @@ class BasePPOAgent(ABC):
                 gamma=ENV_CONFIG.get('gamma', 0.99) if 'gamma' in ENV_CONFIG else metadata.get('gamma', 0.99),
                 lam=ENV_CONFIG.get('lam', 0.95) if 'lam' in ENV_CONFIG else metadata.get('lam', 0.95),
                 clip_ratio=ENV_CONFIG.get('clip_ratio', 0.2) if 'clip_ratio' in ENV_CONFIG else metadata.get('clip_ratio', 0.2),
+                clip_vf=ENV_CONFIG.get('clip_vf', 0.2) if 'clip_vf' in ENV_CONFIG else metadata.get('clip_vf', 0.2),
                 value_coef=ENV_CONFIG.get('value_coef', 0.5) if 'value_coef' in ENV_CONFIG else metadata.get('value_coef', 0.5),
                 entropy_coef=ENV_CONFIG.get('entropy_coef', 0.01) if 'entropy_coef' in ENV_CONFIG else metadata.get('entropy_coef', 0.01),
                 kl_coef=ENV_CONFIG.get('kl_coef', 0.0) if 'kl_coef' in ENV_CONFIG else metadata.get('kl_coef', 0.0),
@@ -418,7 +420,7 @@ class DiscretePPOAgent(BasePPOAgent):
         
         # Get all experiences from memory
         states, actions, rewards, values, old_log_probs, dones = self.memory.get()
-        rewards = self.normalize_rewards(rewards)
+        # rewards = self.normalize_rewards(rewards)
 
         # Compute next value for advantage calculation
         next_value = torch.zeros(size=(self.n_envs, 1), device=self.device)
@@ -439,33 +441,25 @@ class DiscretePPOAgent(BasePPOAgent):
         advantages = advantages.view(-1)
         returns = returns.view(-1)
         values = values.view(-1)
-
+        dataset = TensorDataset(states, actions, old_log_probs, advantages, returns, values)
+        dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        
         # Training loop
         epoch_kl_divs = []
         early_stop = False
-        
+            
         for epoch in range(self.epochs):
             if early_stop:
                 break
-                
-            # Create mini-batches
-            indices = torch.randperm(len(states), device=self.device)
-            
+                            
             batch_kl_divs = []
-            
-            for start in range(0, len(states), self.batch_size):
-                end = start + self.batch_size
-                batch_indices = indices[start:end]
-                
-                if len(batch_indices) < self.batch_size:
-                    continue
-                
-                batch_states = states[batch_indices]
-                batch_actions = actions[batch_indices]
-                batch_old_log_probs = old_log_probs[batch_indices]
-                batch_advantages = advantages[batch_indices]
-                batch_returns = returns[batch_indices]
-                
+
+            for batch in dataloader:
+                batch_states, batch_actions, batch_old_log_probs, batch_advantages, batch_returns, batch_values = batch
+
+                # Normalize advantages within the batch
+                batch_advantages = (batch_advantages - batch_advantages.mean()) / (batch_advantages.std() + 1e-8)
+
                 # Forward pass
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
@@ -477,7 +471,16 @@ class DiscretePPOAgent(BasePPOAgent):
                 if self.adaptive_kl and kl_div > 1.5 * self.target_kl:
                     early_stop = True
                     break
-                
+
+                if self.clip_vf > 0:
+                    # Clipped value function loss
+                    value_pred = batch_values + torch.clamp(
+                        new_values.squeeze(-1) - batch_values,
+                        -self.clip_vf, self.clip_vf
+                    )
+                else:
+                    value_pred = new_values.squeeze(-1)
+
                 # Compute policy loss with clipped log probability ratio
                 log_ratio = new_log_probs.squeeze(-1) - batch_old_log_probs
                 ratio = torch.exp(log_ratio)
@@ -486,7 +489,7 @@ class DiscretePPOAgent(BasePPOAgent):
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # Compute value loss
-                value_loss = nn.MSELoss()(new_values.squeeze(-1), batch_returns)
+                value_loss = nn.MSELoss()(value_pred, batch_returns)
                 
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()
@@ -569,7 +572,7 @@ class ContinuousPPOAgent(BasePPOAgent):
         
         # Get all experiences from memory
         states, actions, rewards, values, old_log_probs, dones = self.memory.get()
-        rewards = self.normalize_rewards(rewards)
+        # rewards = self.normalize_rewards(rewards)
 
         # Compute next value for advantage calculation
         next_value = torch.zeros(size=(self.n_envs, 1), device=self.device)
@@ -590,6 +593,8 @@ class ContinuousPPOAgent(BasePPOAgent):
         advantages = advantages.view(-1)
         returns = returns.view(-1)
         values = values.view(-1)
+        dataset = TensorDataset(states, actions, old_log_probs, advantages, returns, values)
+        dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
         # Training loop
         epoch_kl_divs = []
@@ -599,24 +604,14 @@ class ContinuousPPOAgent(BasePPOAgent):
             if early_stop:
                 break
                 
-            # Create mini-batches
-            indices = torch.randperm(len(states), device=self.device)
-            
             batch_kl_divs = []
-            
-            for start in range(0, len(states), self.batch_size):
-                end = start + self.batch_size
-                batch_indices = indices[start:end]
-                
-                if len(batch_indices) < self.batch_size:
-                    continue
-                
-                batch_states = states[batch_indices]
-                batch_actions = actions[batch_indices]
-                batch_old_log_probs = old_log_probs[batch_indices]
-                batch_advantages = advantages[batch_indices]
-                batch_returns = returns[batch_indices]
-                
+
+            for batch in dataloader:
+                batch_states, batch_actions, batch_old_log_probs, batch_advantages, batch_returns, batch_values = batch
+
+                # Normalize advantages within the batch
+                batch_advantages = (batch_advantages - batch_advantages.mean()) / (batch_advantages.std() + 1e-8)
+
                 # Forward pass
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
@@ -628,7 +623,16 @@ class ContinuousPPOAgent(BasePPOAgent):
                 if self.adaptive_kl and kl_div > 1.5 * self.target_kl:
                     early_stop = True
                     break
-                
+
+                if self.clip_vf > 0:
+                    # Clipped value function loss
+                    value_pred = batch_values + torch.clamp(
+                        new_values.squeeze(-1) - batch_values,
+                        -self.clip_vf, self.clip_vf
+                    )
+                else:
+                    value_pred = new_values.squeeze(-1)
+
                 # Compute policy loss with clipped log probability ratio
                 log_ratio = new_log_probs.squeeze(-1) - batch_old_log_probs
                 ratio = torch.exp(log_ratio)
@@ -637,7 +641,7 @@ class ContinuousPPOAgent(BasePPOAgent):
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # Compute value loss
-                value_loss = nn.MSELoss()(new_values.squeeze(-1), batch_returns)
+                value_loss = nn.MSELoss()(value_pred, batch_returns)
                 
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()
