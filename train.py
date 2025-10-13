@@ -292,10 +292,6 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
                 print(f"Model saved at timestep {timestep}: {model_path}")
                 prior_save = timestep
 
-    # Final update if there are remaining experiences
-    if len(agent.memory) > 0:
-        agent.update()
-
     # Save final model
     final_model_path = get_model_path(env_config['id'], "ppo_model_final.pth")
     agent.save(final_model_path, episode_rewards, episode_lengths)

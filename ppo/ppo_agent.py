@@ -3,6 +3,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 from abc import ABC, abstractmethod
 from .networks import DiscreteActorCritic, ContinuousActorCritic, BaseActorCritic
@@ -439,33 +440,21 @@ class DiscretePPOAgent(BasePPOAgent):
         advantages = advantages.view(-1)
         returns = returns.view(-1)
         values = values.view(-1)
-
+        dataset = TensorDataset(states, actions, old_log_probs, advantages, returns, values)
+        dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        
         # Training loop
         epoch_kl_divs = []
         early_stop = False
-        
+            
         for epoch in range(self.epochs):
             if early_stop:
                 break
-                
-            # Create mini-batches
-            indices = torch.randperm(len(states), device=self.device)
-            
+                            
             batch_kl_divs = []
-            
-            for start in range(0, len(states), self.batch_size):
-                end = start + self.batch_size
-                batch_indices = indices[start:end]
-                
-                if len(batch_indices) < self.batch_size:
-                    continue
-                
-                batch_states = states[batch_indices]
-                batch_actions = actions[batch_indices]
-                batch_old_log_probs = old_log_probs[batch_indices]
-                batch_advantages = advantages[batch_indices]
-                batch_returns = returns[batch_indices]
-                batch_values = values[batch_indices]
+
+            for batch in dataloader:
+                batch_states, batch_actions, batch_old_log_probs, batch_advantages, batch_returns, batch_values = batch
 
                 # Normalize advantages within the batch
                 batch_advantages = (batch_advantages - batch_advantages.mean()) / (batch_advantages.std() + 1e-8)
@@ -603,6 +592,8 @@ class ContinuousPPOAgent(BasePPOAgent):
         advantages = advantages.view(-1)
         returns = returns.view(-1)
         values = values.view(-1)
+        dataset = TensorDataset(states, actions, old_log_probs, advantages, returns, values)
+        dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
         # Training loop
         epoch_kl_divs = []
@@ -612,25 +603,11 @@ class ContinuousPPOAgent(BasePPOAgent):
             if early_stop:
                 break
                 
-            # Create mini-batches
-            indices = torch.randperm(len(states), device=self.device)
-            
             batch_kl_divs = []
-            
-            for start in range(0, len(states), self.batch_size):
-                end = start + self.batch_size
-                batch_indices = indices[start:end]
-                
-                if len(batch_indices) < self.batch_size:
-                    continue
-                
-                batch_states = states[batch_indices]
-                batch_actions = actions[batch_indices]
-                batch_old_log_probs = old_log_probs[batch_indices]
-                batch_advantages = advantages[batch_indices]
-                batch_returns = returns[batch_indices]
-                batch_values = values[batch_indices]
-                
+
+            for batch in dataloader:
+                batch_states, batch_actions, batch_old_log_probs, batch_advantages, batch_returns, batch_values = batch
+
                 # Normalize advantages within the batch
                 batch_advantages = (batch_advantages - batch_advantages.mean()) / (batch_advantages.std() + 1e-8)
 
