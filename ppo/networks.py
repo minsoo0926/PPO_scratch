@@ -34,13 +34,17 @@ class BaseActorCritic(nn.Module, ABC):
         # Shared layers
         self.shared_layers = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
-            # nn.Tanh(),
+            nn.Tanh(),
             # nn.Linear(hidden_dim, hidden_dim),
-            nn.Tanh()
+            # nn.Tanh()
         )
         
         # Critic head (value network)
-        self.critic = nn.Linear(hidden_dim, 1)
+        self.critic = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, 1)
+        )
 
     def get_value(self, state):
         """Get state value."""
