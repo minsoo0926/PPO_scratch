@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from ppo.normalizer import RunningMeanStd, RunningStd
 
 LOG_STD_MAX = 2.0
-LOG_STD_MIN = -5.0
+LOG_STD_MIN = -20.0
 
 
 class BaseActorCritic(nn.Module, ABC):
@@ -30,17 +30,11 @@ class BaseActorCritic(nn.Module, ABC):
         self.obs_rms = RunningMeanStd(shape=(state_dim,))
         self.rew_rs = RunningStd(shape=(1,))
         self.obs_norm = True
-
-        # Shared layers
-        self.shared_layers = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
-            nn.Tanh(),
-            # nn.Linear(hidden_dim, hidden_dim),
-            # nn.Tanh()
-        )
         
         # Critic head (value network)
         self.critic = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.Tanh(),
             nn.Linear(hidden_dim, 1)
@@ -48,9 +42,8 @@ class BaseActorCritic(nn.Module, ABC):
 
     def get_value(self, state):
         """Get state value."""
-        shared_features = self.shared_layers(state)
-        return self.critic(shared_features)
-    
+        return self.critic(state)
+
     def update_obs_rms(self, state):
         """Update observation running mean and std."""
         self.obs_rms.update(state)
@@ -79,6 +72,8 @@ class DiscreteActorCritic(BaseActorCritic):
         
         # Actor head (policy network) - outputs logits for categorical distribution
         self.actor = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.Tanh(),
             nn.Linear(hidden_dim, action_dim)
@@ -89,9 +84,8 @@ class DiscreteActorCritic(BaseActorCritic):
         state = state.to(torch.float32)
         if self.obs_norm:
             state = self.obs_rms.normalize(state)
-        shared_features = self.shared_layers(state)
-        action_logits = self.actor(shared_features)
-        state_value = self.critic(shared_features)
+        action_logits = self.actor(state)
+        state_value = self.critic(state)
         return action_logits, state_value
 
     @torch.no_grad()
@@ -153,6 +147,8 @@ class ContinuousActorCritic(BaseActorCritic):
         
         # Actor head - outputs raw mean (pre-tanh)
         self.actor_mean = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.Tanh(),
             nn.Linear(hidden_dim, action_dim)
@@ -165,9 +161,8 @@ class ContinuousActorCritic(BaseActorCritic):
         state = state.to(torch.float32)
         if self.obs_norm:
             state = self.obs_rms.normalize(state)
-        shared_features = self.shared_layers(state)
-        raw_action_mean = self.actor_mean(shared_features)
-        state_value = self.critic(shared_features)
+        raw_action_mean = self.actor_mean(state)
+        state_value = self.critic(state)
         log_std = torch.clamp(self.log_std, LOG_STD_MIN, LOG_STD_MAX)
         return raw_action_mean, state_value, log_std
     
