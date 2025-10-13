@@ -115,11 +115,7 @@ class BasePPOAgent(ABC):
             delta = rewards[:, t:t+1] + self.gamma * next_val * next_non_terminal - values[:, t:t+1]
             gae = delta + self.gamma * self.lam * next_non_terminal * gae
             advantages[:, t:t+1] = gae
-
-        advantages = (advantages - advantages.mean(-1, keepdim=True)) / (advantages.std(-1, keepdim=True) + 1e-8)
-        for t in range(batch_len):
-            returns[:, t:t+1] = advantages[:, t:t+1] + values[:, t:t+1]
-        
+        returns = advantages + values
         return advantages, returns
 
     def compute_kl_divergence(self, old_log_probs, new_log_probs):
@@ -418,7 +414,7 @@ class DiscretePPOAgent(BasePPOAgent):
         
         # Get all experiences from memory
         states, actions, rewards, values, old_log_probs, dones = self.memory.get()
-        rewards = self.normalize_rewards(rewards)
+        # rewards = self.normalize_rewards(rewards)
 
         # Compute next value for advantage calculation
         next_value = torch.zeros(size=(self.n_envs, 1), device=self.device)
@@ -465,7 +461,10 @@ class DiscretePPOAgent(BasePPOAgent):
                 batch_old_log_probs = old_log_probs[batch_indices]
                 batch_advantages = advantages[batch_indices]
                 batch_returns = returns[batch_indices]
-                
+
+                # Normalize advantages within the batch
+                batch_advantages = (batch_advantages - batch_advantages.mean()) / (batch_advantages.std() + 1e-8)
+
                 # Forward pass
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
@@ -569,7 +568,7 @@ class ContinuousPPOAgent(BasePPOAgent):
         
         # Get all experiences from memory
         states, actions, rewards, values, old_log_probs, dones = self.memory.get()
-        rewards = self.normalize_rewards(rewards)
+        # rewards = self.normalize_rewards(rewards)
 
         # Compute next value for advantage calculation
         next_value = torch.zeros(size=(self.n_envs, 1), device=self.device)
@@ -617,6 +616,9 @@ class ContinuousPPOAgent(BasePPOAgent):
                 batch_advantages = advantages[batch_indices]
                 batch_returns = returns[batch_indices]
                 
+                # Normalize advantages within the batch
+                batch_advantages = (batch_advantages - batch_advantages.mean()) / (batch_advantages.std() + 1e-8)
+
                 # Forward pass
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
                 
