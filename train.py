@@ -10,6 +10,7 @@ from gymnasium.wrappers.vector.numpy_to_torch import NumpyToTorch as VectorNumpy
 import matplotlib.pyplot as plt
 from ppo import create_ppo_agent, print_action_space_info
 from config import ENV_CONFIG
+from ppo.ppo_agent import BasePPOAgent
 
 if ENV_CONFIG['id'].startswith("ALE/"):
     # Import ALE for Atari environments
@@ -175,7 +176,7 @@ def train_ppo(env_config=ENV_CONFIG, total_timesteps=100000, save_freq=10000, re
         
         # Load checkpoint to get episode statistics
         checkpoint = torch.load(resume_from, map_location='cpu', weights_only=False)
-        agent.load(resume_from)
+        agent = BasePPOAgent.load(resume_from)
 
         # Extract timestep from filename if possible
         try:
