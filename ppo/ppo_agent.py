@@ -646,7 +646,7 @@ class ContinuousPPOAgent(BasePPOAgent):
                 kl_loss = self.kl_coef * kl_div
                 
                 # Total loss
-                total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss + kl_loss
+                total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss # + kl_loss
 
                 # Backward pass
                 self.optimizer.zero_grad()
