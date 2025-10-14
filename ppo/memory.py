@@ -1,159 +1,133 @@
-"""Memory buffer for storing experiences in PPO."""
+"""Rollout buffer for PPO, using PyTorch tensors."""
 
 import torch
-import numpy as np
-from abc import ABC, abstractmethod
+from torch.utils.data.dataset import Dataset
 
 
-class BaseMemory(ABC):
-    """Base class for PPO memory buffers."""
+class RolloutBuffer:
+    """
+    Rollout buffer implemented with PyTorch tensors, inspired by Stable Baselines 3.
+    """
 
-    def __init__(self, n_envs, buffer_size, state_dim, device='cpu'):
-        """
-        Initialize memory buffer.
-        
-        Args:
-            buffer_size (int): Maximum size of the buffer
-            state_dim (int): Dimension of state space
-            device (str): Device to store tensors on
-        """
-        self.n_envs = n_envs
+    def __init__(self, buffer_size, state_dim, action_dim, device, gae_lambda, gamma, n_envs):
         self.buffer_size = buffer_size
-        self.buffer_length = buffer_size // n_envs
+        self.state_dim = state_dim
+        self.action_dim = action_dim
         self.device = device
-        self.ptr = 0
-        self.size = 0
-        
-        # Initialize common buffers
-        self.states = torch.zeros((n_envs, self.buffer_length, state_dim), dtype=torch.float32, device=device)
-        self.rewards = torch.zeros((n_envs, self.buffer_length), dtype=torch.float32, device=device)
-        self.values = torch.zeros((n_envs, self.buffer_length), dtype=torch.float32, device=device)
-        self.dones = torch.zeros((n_envs, self.buffer_length), dtype=torch.bool, device=device)
+        self.gae_lambda = gae_lambda
+        self.gamma = gamma
+        self.n_envs = n_envs
+        self.action_dim_storage = action_dim if action_dim is not None else 1
 
-    def is_full(self):
-        """Check if buffer is full."""
-        return self.ptr == self.buffer_length - 1
-    
+        # Determine action dtype based on action_dim
+        self.is_discrete = action_dim is None
+        self.action_dtype = torch.long if self.is_discrete else torch.float32
+
+        self.observations = torch.zeros((self.buffer_size, self.n_envs, self.state_dim), dtype=torch.float32, device=device)
+        self.actions = torch.zeros((self.buffer_size, self.n_envs, self.action_dim_storage), dtype=self.action_dtype, device=device)
+        self.rewards = torch.zeros((self.buffer_size, self.n_envs), dtype=torch.float32, device=device)
+        self.returns = torch.zeros((self.buffer_size, self.n_envs), dtype=torch.float32, device=device)
+        self.dones = torch.zeros((self.buffer_size, self.n_envs), dtype=torch.float32, device=device)
+        self.values = torch.zeros((self.buffer_size, self.n_envs), dtype=torch.float32, device=device)
+        self.log_probs = torch.zeros((self.buffer_size, self.n_envs), dtype=torch.float32, device=device)
+        self.advantages = torch.zeros((self.buffer_size, self.n_envs), dtype=torch.float32, device=device)
+        
+        self.ptr = 0
+        self.full = False
+
     def __len__(self):
-        """Return current size of buffer."""
-        return self.size
+        return self.buffer_size * self.n_envs
+
+    def add(self, obs, action, reward, done, value, log_prob):
+        """
+        Adds a transition to the buffer.
+        All inputs are expected to be PyTorch tensors on the correct device.
+        """
+        if self.full:
+            raise ValueError("Buffer is full. Call .clear() before adding new data.")
+
+        self.observations[self.ptr] = obs
+        if self.is_discrete:
+            action = action.reshape(-1, 1)
+        self.actions[self.ptr] = action
+        self.rewards[self.ptr] = reward
+        self.dones[self.ptr] = done.float()
+        self.values[self.ptr] = value.flatten()
+        self.log_probs[self.ptr] = log_prob
+        
+        self.ptr += 1
+        if self.ptr == self.buffer_size:
+            self.full = True
+
+    def compute_returns_and_advantage(self, last_values, dones):
+        """
+        Post-processing step: compute the lambda-return (TD(lambda) estimate)
+        and GAE(lambda) advantage.
+        """
+        last_gae_lam = 0
+        for step in reversed(range(self.buffer_size)):
+            if step == self.buffer_size - 1:
+                next_non_terminal = 1.0 - dones.float()
+                next_values = last_values.flatten()
+            else:
+                next_non_terminal = 1.0 - self.dones[step + 1]
+                next_values = self.values[step + 1]
+            
+            delta = self.rewards[step] + self.gamma * next_values * next_non_terminal - self.values[step]
+            last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
+            self.advantages[step] = last_gae_lam
+        
+        self.returns = self.advantages + self.values
+
+    def get(self):
+        """
+        Returns all data in the buffer and flattens it.
+        """
+        assert self.full, "Rollout buffer is not full. Call compute_returns_and_advantage first."
+        
+        # Flatten the data
+        # Shape: (n_steps, n_envs, *shape) -> (n_steps * n_envs, *shape)
+        observations = self.observations.swapaxes(0, 1).reshape(-1, self.state_dim)
+        actions = self.actions.swapaxes(0, 1).reshape(-1, self.action_dim_storage)
+        if self.is_discrete:
+            actions = actions.long().flatten()
+        values = self.values.swapaxes(0, 1).reshape(-1)
+        log_probs = self.log_probs.swapaxes(0, 1).reshape(-1)
+        advantages = self.advantages.swapaxes(0, 1).reshape(-1)
+        returns = self.returns.swapaxes(0, 1).reshape(-1)
+
+        return RolloutBufferSamples(
+            observations=observations,
+            actions=actions,
+            old_values=values,
+            old_log_prob=log_probs,
+            advantages=advantages,
+            returns=returns,
+        )
 
     def clear(self):
-        """Clear the memory buffer."""
         self.ptr = 0
-        self.size = 0
-
-    @abstractmethod
-    def store(self, idx_env, state, action, reward, value, log_prob, done):
-        """Store a single experience."""
-        pass
-
-    @abstractmethod
-    def get(self) -> tuple:
-        """Get all stored experiences."""
-        pass
+        self.full = False
 
 
-class DiscreteMemory(BaseMemory):
-    """Memory buffer for discrete action spaces."""
+class RolloutBufferSamples(Dataset):
+    def __init__(self, observations, actions, old_values, old_log_prob, advantages, returns):
+        self.observations = observations
+        self.actions = actions
+        self.old_values = old_values
+        self.old_log_prob = old_log_prob
+        self.advantages = advantages
+        self.returns = returns
 
-    def __init__(self, n_envs, buffer_size, state_dim, device='cpu'):
-        super().__init__(n_envs, buffer_size, state_dim, device)
+    def __len__(self):
+        return len(self.observations)
 
-        # Discrete action specific buffers
-        self.actions = torch.zeros((self.n_envs, self.buffer_length), dtype=torch.long, device=device)
-        self.log_probs = torch.zeros((self.n_envs, self.buffer_length), dtype=torch.float32, device=device)
-
-    def store(self, idx_env, state, action, reward, value, log_prob, done):
-        """Store a discrete action experience."""
-        self.states[idx_env, self.ptr] = state
-        self.actions[idx_env, self.ptr] = int(action)
-        self.rewards[idx_env, self.ptr] = float(reward)
-        self.values[idx_env, self.ptr] = float(value)
-        self.log_probs[idx_env, self.ptr] = float(log_prob)
-        self.dones[idx_env, self.ptr] = bool(done)
-
-        self.ptr = (self.ptr + 1) % self.buffer_length if idx_env == self.n_envs - 1 else self.ptr
-        self.size = min(self.size + self.n_envs, self.buffer_length * self.n_envs)
-
-    def get(self):
-        """Get all stored discrete experiences."""
-        assert self.size > 0, "Memory buffer is empty"
-
-        if self.size < self.buffer_length:
-            return (
-                self.states[:, :self.size],
-                self.actions[:, :self.size],
-                self.rewards[:, :self.size],
-                self.values[:, :self.size],
-                self.log_probs[:, :self.size],
-                self.dones[:, :self.size]
-            )
-        else:
-            indices = torch.arange(self.ptr, self.ptr + self.buffer_length, device=self.device) % self.buffer_length
-            return (
-                self.states[:, indices],
-                self.actions[:, indices],
-                self.rewards[:, indices],
-                self.values[:, indices],
-                self.log_probs[:, indices],
-                self.dones[:, indices]
-            )
-
-
-class ContinuousMemory(BaseMemory):
-    """Memory buffer for continuous action spaces."""
-    
-    def __init__(self, n_envs, buffer_size, state_dim, action_dim, device='cpu'):
-        super().__init__(n_envs, buffer_size, state_dim, device)
-
-        # Continuous action specific buffers
-        self.action_dim = action_dim
-        self.actions = torch.zeros((n_envs, self.buffer_size, action_dim), dtype=torch.float32, device=device)
-        self.log_probs = torch.zeros((n_envs, self.buffer_size, 1), dtype=torch.float32, device=device)
-
-    def store(self, idx_env, state, action, reward, value, log_prob, done):
-        """Store a continuous action experience."""
-        self.states[idx_env, self.ptr] = state
-        self.actions[idx_env, self.ptr] = action
-        self.rewards[idx_env, self.ptr] = float(reward)
-        self.values[idx_env, self.ptr] = float(value)
-        self.log_probs[idx_env, self.ptr] = log_prob
-        self.dones[idx_env, self.ptr] = bool(done)
-
-        self.ptr = (self.ptr + 1) % self.buffer_length if idx_env == self.n_envs - 1 else self.ptr
-        self.size = min(self.size + self.n_envs, self.buffer_length * self.n_envs)
-
-    def get(self):
-        """Get all stored continuous experiences."""
-        assert self.size > 0, "Memory buffer is empty"
-
-        if self.size < self.buffer_length:
-            return (
-                self.states[:, :self.size],
-                self.actions[:, :self.size],
-                self.rewards[:, :self.size],
-                self.values[:, :self.size],
-                self.log_probs[:, :self.size],
-                self.dones[:, :self.size]
-            )
-        else:
-            indices = torch.arange(self.ptr, self.ptr + self.buffer_length, device=self.device) % self.buffer_length
-            return (
-                self.states[:, indices],
-                self.actions[:, indices],
-                self.rewards[:, indices],
-                self.values[:, indices],
-                self.log_probs[:, indices],
-                self.dones[:, indices]
-            )
-
-
-# Legacy class for backward compatibility
-class PPOMemory(DiscreteMemory):
-    """Legacy PPOMemory class - defaults to discrete actions for backward compatibility."""
-    
-    def __init__(self, buffer_size, state_dim, device='cpu', continuous_dim=None):
-        if continuous_dim is not None:
-            raise ValueError("Use ContinuousMemory directly for continuous action spaces")
-        super().__init__(buffer_size, state_dim, device)
+    def __getitem__(self, idx):
+        return (
+            self.observations[idx],
+            self.actions[idx],
+            self.old_values[idx],
+            self.old_log_prob[idx],
+            self.advantages[idx],
+            self.returns[idx],
+        )
