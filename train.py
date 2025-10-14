@@ -311,6 +311,8 @@ def plot_training_results(episode_rewards, episode_lengths, agent=None, window=1
     
     if agent and hasattr(agent, 'training_stats') and agent.training_stats:
         training_stats = agent.training_stats
+        del training_stats['kl_loss']
+        del training_stats['kl_divergence']
         num_stats = len(training_stats)
     
     # Calculate total number of plots (rewards + lengths + training stats)
