@@ -460,26 +460,9 @@ class DiscretePPOAgent(BasePPOAgent):
                 # Normalize advantages within the batch
                 batch_advantages = (batch_advantages - batch_advantages.mean()) / (batch_advantages.std() + 1e-8)
 
-                # Forward pass
                 new_log_probs, entropy, new_values = self.network.evaluate(batch_states, batch_actions)
-                
-                # Compute KL divergence
                 kl_div = self.compute_kl_divergence(batch_old_log_probs, new_log_probs.squeeze(-1))
                 batch_kl_divs.append(kl_div.item())
-                
-                # Early stopping based on KL divergence
-                if self.adaptive_kl and kl_div > 1.5 * self.target_kl:
-                    early_stop = True
-                    break
-
-                if self.clip_vf > 0:
-                    # Clipped value function loss
-                    value_pred = batch_values + torch.clamp(
-                        new_values.squeeze(-1) - batch_values,
-                        -self.clip_vf, self.clip_vf
-                    )
-                else:
-                    value_pred = new_values.squeeze(-1)
 
                 # Compute policy loss with clipped log probability ratio
                 log_ratio = new_log_probs.squeeze(-1) - batch_old_log_probs
@@ -489,7 +472,17 @@ class DiscretePPOAgent(BasePPOAgent):
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # Compute value loss
-                value_loss = nn.MSELoss()(value_pred, batch_returns)
+                if self.clip_vf > 0:
+                    value_loss_unclipped = (new_values.squeeze(-1) - batch_returns) ** 2
+                    v_clipped = batch_values + torch.clamp(
+                        new_values.squeeze(-1) - batch_values,
+                        -self.clip_vf,
+                        self.clip_vf,
+                    )
+                    value_loss_clipped = (v_clipped - batch_returns) ** 2
+                    value_loss = 0.5 * torch.max(value_loss_unclipped, value_loss_clipped).mean()
+                else:
+                    value_loss = nn.MSELoss()(new_values.squeeze(-1), batch_returns)
                 
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()
@@ -624,15 +617,6 @@ class ContinuousPPOAgent(BasePPOAgent):
                     early_stop = True
                     break
 
-                if self.clip_vf > 0:
-                    # Clipped value function loss
-                    value_pred = batch_values + torch.clamp(
-                        new_values.squeeze(-1) - batch_values,
-                        -self.clip_vf, self.clip_vf
-                    )
-                else:
-                    value_pred = new_values.squeeze(-1)
-
                 # Compute policy loss with clipped log probability ratio
                 log_ratio = new_log_probs.squeeze(-1) - batch_old_log_probs
                 ratio = torch.exp(log_ratio)
@@ -641,7 +625,18 @@ class ContinuousPPOAgent(BasePPOAgent):
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
                 # Compute value loss
-                value_loss = nn.MSELoss()(value_pred, batch_returns)
+                if self.clip_vf > 0:
+                    # Clipped value function loss
+                    value_loss_unclipped = (new_values.squeeze(-1) - batch_returns) ** 2
+                    v_clipped = batch_values + torch.clamp(
+                        new_values.squeeze(-1) - batch_values,
+                        -self.clip_vf,
+                        self.clip_vf,
+                    )
+                    value_loss_clipped = (v_clipped - batch_returns) ** 2
+                    value_loss = 0.5 * torch.max(value_loss_unclipped, value_loss_clipped).mean()
+                else:
+                    value_loss = nn.MSELoss()(new_values.squeeze(-1), batch_returns)
                 
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()
